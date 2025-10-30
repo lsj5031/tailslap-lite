@@ -144,8 +144,16 @@ public sealed class ClipboardService
             NotificationService.ShowWarning("Unable to access clipboard. Check if another application is using it.");
         }
         
-        IntPtr foregroundWindow = GetForegroundWindow();
-        try { Logger.Log($"Foreground before: {DescribeWindow(foregroundWindow)}"); } catch { }
+        IntPtr foregroundWindow = IntPtr.Zero;
+        try 
+        { 
+            foregroundWindow = GetForegroundWindow();
+            try { Logger.Log($"Foreground before: {DescribeWindow(foregroundWindow)}"); } catch { }
+        }
+        catch (Exception ex) 
+        { 
+            try { Logger.Log($"GetForegroundWindow failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+        }
         
         // 1) Try UI Automation first
         try
@@ -175,7 +183,11 @@ public sealed class ClipboardService
                 RecordCaptureSuccess("UIA_FromPoint", false);
             }
         }
-        catch (Exception ex) { try { Logger.Log($"UIA selection error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+        catch (Exception ex) 
+        { 
+            try { Logger.Log($"UIA selection error: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            // Continue to other methods instead of crashing
+        }
 
         // 1b) UIA deep search (caret point and subtree scan)
         try
@@ -362,90 +374,148 @@ public sealed class ClipboardService
 
     private static string? TryGetSelectionViaUIA()
     {
-        var focused = AutomationElement.FocusedElement;
-        if (focused == null) return null;
-        try
+        // Use MTA thread for UI Automation as per Microsoft recommendations
+        // This prevents COM marshaling crashes with applications like Firefox
+        var uiaTask = RunInMtaForUIA(() =>
         {
-            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out var tpObj) && tpObj is TextPattern tp)
+            try
             {
-                var sel = tp.GetSelection();
-                if (sel != null && sel.Length > 0)
-                {
-                    var text = sel[0].GetText(int.MaxValue);
-                    return string.IsNullOrWhiteSpace(text) ? null : text;
-                }
-            }
-            if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vpObj) && vpObj is ValuePattern vp)
-            {
-                var v = vp.Current.Value;
-                return string.IsNullOrWhiteSpace(v) ? null : v;
-            }
-            // Search within the active window for a focused text provider
-            var hwnd = GetForegroundWindow();
-            if (hwnd != IntPtr.Zero)
-            {
+                var focused = AutomationElement.FocusedElement;
+                if (focused == null) return null;
+                
                 try
                 {
-                    var root = AutomationElement.FromHandle(hwnd);
-                    if (root != null)
-                    {
-                        var cond = new PropertyCondition(AutomationElement.IsTextPatternAvailableProperty, true);
-                        var el = root.FindFirst(TreeScope.Subtree, cond);
-                        if (el != null && el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo) && tpo is TextPattern tp2)
-                        {
-                            var sel2 = tp2.GetSelection();
-                            if (sel2 != null && sel2.Length > 0)
-                            {
-                                var t2 = sel2[0].GetText(int.MaxValue);
-                                if (!string.IsNullOrWhiteSpace(t2)) return t2;
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
-        return null;
-    }
-
-    private static string? TryGetSelectionViaUIAFromCaret()
-    {
-        try
-        {
-            var fg = GetForegroundWindow();
-            var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-            uint tid = GetWindowThreadProcessId(fg, out _);
-            if (!GetGUIThreadInfo(tid, ref info)) return null;
-            if (info.hwndCaret == IntPtr.Zero) return null;
-            var rc = info.rcCaret;
-            var pt = new POINT { X = rc.Left + 1, Y = rc.Top + (rc.Bottom - rc.Top) / 2 };
-            try { var logStr = $"Caret hwnd={DescribeWindow(info.hwndCaret)}, rc=({rc.Left},{rc.Top},{rc.Right},{rc.Bottom})"; Logger.Log(logStr); } catch { }
-            try { ClientToScreen(info.hwndCaret, ref pt); } catch { }
-            System.Windows.Point wpt = new(pt.X, pt.Y);
-            AutomationElement? el = null;
-            try { el = AutomationElement.FromPoint(wpt); } catch { el = null; }
-            if (el == null) return null;
-            // Walk up to find a TextPattern provider
-            for (AutomationElement? cur = el; cur != null; cur = TreeWalker.RawViewWalker.GetParent(cur))
-            {
-                try
-                {
-                    if (cur.TryGetCurrentPattern(TextPattern.Pattern, out var tpo) && tpo is TextPattern tp)
+                    if (focused.TryGetCurrentPattern(TextPattern.Pattern, out var tpObj) && tpObj is TextPattern tp)
                     {
                         var sel = tp.GetSelection();
                         if (sel != null && sel.Length > 0)
                         {
-                            var t = sel[0].GetText(int.MaxValue);
-                            if (!string.IsNullOrWhiteSpace(t)) return t;
+                            var text = sel[0].GetText(int.MaxValue);
+                            return string.IsNullOrWhiteSpace(text) ? null : text;
                         }
                     }
+                    if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vpObj) && vpObj is ValuePattern vp)
+                    {
+                        var v = vp.Current.Value;
+                        return string.IsNullOrWhiteSpace(v) ? null : v;
+                    }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    try { Logger.Log($"UIA pattern access failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    return null;
+                }
+                
+                // Search within the active window for a focused text provider
+                var hwnd = GetForegroundWindow();
+                if (hwnd != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var root = AutomationElement.FromHandle(hwnd);
+                        if (root != null)
+                        {
+                            var cond = new PropertyCondition(AutomationElement.IsTextPatternAvailableProperty, true);
+                            var el = root.FindFirst(TreeScope.Subtree, cond);
+                            if (el != null && el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo) && tpo is TextPattern tp2)
+                            {
+                                var sel2 = tp2.GetSelection();
+                                if (sel2 != null && sel2.Length > 0)
+                                {
+                                    var t2 = sel2[0].GetText(int.MaxValue);
+                                    if (!string.IsNullOrWhiteSpace(t2)) return t2;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Logger.Log($"UIA subtree search failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    }
+                }
             }
+            catch (Exception ex)
+            {
+                try { Logger.Log($"UIA focused element access failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            }
+            return null;
+        });
+
+        // Wait for completion with timeout
+        if (uiaTask.Wait(System.TimeSpan.FromMilliseconds(800)))
+        {
+            return uiaTask.Result;
         }
-        catch { }
-        return null;
+        else
+        {
+            try { Logger.Log("UIA operation timed out after 800ms"); } catch { }
+            return null;
+        }
+    }
+
+    private static string? TryGetSelectionViaUIAFromCaret()
+    {
+        // Use MTA thread for UI Automation as per Microsoft recommendations
+        var uiaTask = RunInMtaForUIA(() =>
+        {
+            try
+            {
+                var fg = GetForegroundWindow();
+                var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+                uint tid = GetWindowThreadProcessId(fg, out _);
+                if (!GetGUIThreadInfo(tid, ref info)) return null;
+                if (info.hwndCaret == IntPtr.Zero) return null;
+                var rc = info.rcCaret;
+                var pt = new POINT { X = rc.Left + 1, Y = rc.Top + (rc.Bottom - rc.Top) / 2 };
+                try { var logStr = $"Caret hwnd={DescribeWindow(info.hwndCaret)}, rc=({rc.Left},{rc.Top},{rc.Right},{rc.Bottom})"; Logger.Log(logStr); } catch { }
+                try { ClientToScreen(info.hwndCaret, ref pt); } catch { }
+                System.Windows.Point wpt = new(pt.X, pt.Y);
+                AutomationElement? el = null;
+                try { el = AutomationElement.FromPoint(wpt); } catch (Exception ex) 
+                { 
+                    try { Logger.Log($"UIA FromPoint failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    el = null; 
+                }
+                if (el == null) return null;
+                // Walk up to find a TextPattern provider
+                for (AutomationElement? cur = el; cur != null; cur = TreeWalker.RawViewWalker.GetParent(cur))
+                {
+                    try
+                    {
+                        if (cur.TryGetCurrentPattern(TextPattern.Pattern, out var tpo) && tpo is TextPattern tp)
+                        {
+                            var sel = tp.GetSelection();
+                            if (sel != null && sel.Length > 0)
+                            {
+                                var t = sel[0].GetText(int.MaxValue);
+                                if (!string.IsNullOrWhiteSpace(t)) return t;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Logger.Log($"UIA caret pattern access failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                        // Continue walking up the tree
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                try { Logger.Log($"UIA caret method failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            }
+            return null;
+        });
+
+        // Wait for completion with timeout
+        if (uiaTask.Wait(System.TimeSpan.FromMilliseconds(500)))
+        {
+            return uiaTask.Result;
+        }
+        else
+        {
+            try { Logger.Log("UIA caret operation timed out after 500ms"); } catch { }
+            return null;
+        }
     }
 
     private static string? TryGetSelectionViaWin32(IntPtr hwndForeground)
@@ -473,58 +543,94 @@ public sealed class ClipboardService
 
     private static string? TryGetSelectionViaUIADeep(IntPtr hwndForeground)
     {
-        try
+        // Use MTA thread for UI Automation as per Microsoft recommendations
+        var uiaTask = RunInMtaForUIA(() =>
         {
-            // Attempt selection from caret point
-            var caretSel = TryGetSelectionAtCaretPoint();
-            if (!string.IsNullOrWhiteSpace(caretSel)) return caretSel;
-
-            if (hwndForeground == IntPtr.Zero) return null;
-            var root = AutomationElement.FromHandle(hwndForeground);
-            if (root == null) return null;
-
-            var sw = Stopwatch.StartNew();
-            int visited = 0;
-            var stack = new System.Collections.Generic.Stack<AutomationElement>();
-            stack.Push(root);
-            while (stack.Count > 0 && visited < 3000 && sw.ElapsedMilliseconds < 400)
+            try
             {
-                AutomationElement? el = null;
-                try { el = stack.Pop(); } catch { el = null; }
-                if (el == null) continue;
-                visited++;
-                try
+                // Attempt selection from caret point
+                var caretSel = TryGetSelectionAtCaretPoint();
+                if (!string.IsNullOrWhiteSpace(caretSel)) return caretSel;
+
+                if (hwndForeground == IntPtr.Zero) return null;
+                AutomationElement? root = null;
+                try 
+                { 
+                    root = AutomationElement.FromHandle(hwndForeground); 
+                }
+                catch (Exception ex)
                 {
-                    if (el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo) && tpo is TextPattern tp)
+                    try { Logger.Log($"UIA deep FromHandle failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    return null;
+                }
+                if (root == null) return null;
+
+                var sw = Stopwatch.StartNew();
+                int visited = 0;
+                var stack = new System.Collections.Generic.Stack<AutomationElement>();
+                stack.Push(root);
+                while (stack.Count > 0 && visited < 3000 && sw.ElapsedMilliseconds < 400)
+                {
+                    AutomationElement? el = null;
+                    try { el = stack.Pop(); } catch { el = null; }
+                    if (el == null) continue;
+                    visited++;
+                    try
                     {
-                        try
+                        if (el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo) && tpo is TextPattern tp)
                         {
-                            var sel = tp.GetSelection();
-                            if (sel != null && sel.Length > 0)
+                            try
                             {
-                                var t = sel[0].GetText(int.MaxValue);
-                                if (!string.IsNullOrWhiteSpace(t)) return t;
+                                var sel = tp.GetSelection();
+                                if (sel != null && sel.Length > 0)
+                                {
+                                    var t = sel[0].GetText(int.MaxValue);
+                                    if (!string.IsNullOrWhiteSpace(t)) return t;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                try { Logger.Log($"UIA deep selection access failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
                             }
                         }
-                        catch { }
                     }
-                }
-                catch { }
-
-                try
-                {
-                    var children = el.FindAll(TreeScope.Children, Condition.TrueCondition);
-                    for (int i = 0; i < children.Count; i++)
+                    catch (Exception ex)
                     {
-                        var child = children[i];
-                        if (child != null) stack.Push(child);
+                        try { Logger.Log($"UIA deep pattern access failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    }
+
+                    try
+                    {
+                        var children = el.FindAll(TreeScope.Children, Condition.TrueCondition);
+                        for (int i = 0; i < children.Count; i++)
+                        {
+                            var child = children[i];
+                            if (child != null) stack.Push(child);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Logger.Log($"UIA deep children enumeration failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
                     }
                 }
-                catch { }
             }
+            catch (Exception ex)
+            {
+                try { Logger.Log($"UIA deep search failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            }
+            return null;
+        });
+
+        // Wait for completion with timeout
+        if (uiaTask.Wait(System.TimeSpan.FromMilliseconds(800)))
+        {
+            return uiaTask.Result;
         }
-        catch { }
-        return null;
+        else
+        {
+            try { Logger.Log("UIA deep search timed out after 800ms"); } catch { }
+            return null;
+        }
     }
 
     private static string? TryGetSelectionAtCaretPoint()
@@ -789,6 +895,29 @@ public sealed class ClipboardService
         });
         th.IsBackground = true;
         th.SetApartmentState(ApartmentState.STA);
+        th.Start();
+        return tcs.Task;
+    }
+
+    // New method for UI Automation operations using MTA thread (recommended by Microsoft)
+    private static System.Threading.Tasks.Task<T> RunInMtaForUIA<T>(Func<T> func)
+    {
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<T>();
+        var th = new Thread(() =>
+        {
+            try 
+            { 
+                var r = func(); 
+                tcs.SetResult(r); 
+            }
+            catch (Exception ex) 
+            { 
+                try { Logger.Log($"UIA MTA thread exception: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                tcs.SetException(ex); 
+            }
+        });
+        th.IsBackground = true;
+        th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
         th.Start();
         return tcs.Task;
     }
