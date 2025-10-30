@@ -62,4 +62,55 @@ public sealed class ConfigService
     }
 
     public string GetConfigPath() => FilePath;
+
+    public static bool IsValidUrl(string url)
+    {
+        return !string.IsNullOrWhiteSpace(url) && 
+               Uri.TryCreate(url, UriKind.Absolute, out var uri) && 
+               (uri.Scheme == "http" || uri.Scheme == "https");
+    }
+
+    public static bool IsValidTemperature(double temperature)
+    {
+        return temperature >= 0 && temperature <= 2;
+    }
+
+    public static bool IsValidMaxTokens(int maxTokens)
+    {
+        return maxTokens > 0 && maxTokens <= 32768;
+    }
+
+    public static bool IsValidModelName(string modelName)
+    {
+        return !string.IsNullOrWhiteSpace(modelName) && 
+               modelName.Trim().Length > 0;
+    }
+
+    public AppConfig CreateValidatedCopy()
+    {
+        var cfg = LoadOrDefault();
+        
+        // Validate and fix common issues
+        if (!IsValidUrl(cfg.Llm.BaseUrl))
+        {
+            cfg.Llm.BaseUrl = "http://localhost:11434/v1";
+        }
+        
+        if (!IsValidTemperature(cfg.Llm.Temperature))
+        {
+            cfg.Llm.Temperature = 0.2;
+        }
+        
+        if (cfg.Llm.MaxTokens.HasValue && !IsValidMaxTokens(cfg.Llm.MaxTokens.Value))
+        {
+            cfg.Llm.MaxTokens = null;
+        }
+        
+        if (!IsValidModelName(cfg.Llm.Model))
+        {
+            cfg.Llm.Model = "llama3.1";
+        }
+        
+        return cfg;
+    }
 }

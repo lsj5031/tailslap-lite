@@ -138,7 +138,11 @@ public sealed class ClipboardService
                 originalClipboard = Clipboard.GetText(TextDataFormat.UnicodeText); 
             try { Logger.Log($"Original clipboard captured: len={(originalClipboard?.Length ?? 0)}"); } catch { }
         } 
-        catch (Exception ex) { try { Logger.Log($"Read original clipboard failed: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+        catch (Exception ex) 
+        { 
+            try { Logger.Log($"Read original clipboard failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            NotificationService.ShowWarning("Unable to access clipboard. Check if another application is using it.");
+        }
         
         IntPtr foregroundWindow = GetForegroundWindow();
         try { Logger.Log($"Foreground before: {DescribeWindow(foregroundWindow)}"); } catch { }
@@ -238,27 +242,53 @@ public sealed class ClipboardService
         return string.Empty;
     }
 
-    public void SetText(string text)
+    public bool SetText(string text)
     {
         int retries = 3;
         while (retries-- > 0)
         {
-            try { Clipboard.SetText(text, TextDataFormat.UnicodeText); try { Logger.Log($"SetText ok, len={text?.Length ?? 0}"); } catch { } return; }
-            catch (Exception ex) { try { Logger.Log($"SetText failed (retries left {retries}): {ex.GetType().Name}: {ex.Message}"); } catch { } Thread.Sleep(50); }
+            try 
+            { 
+                Clipboard.SetText(text, TextDataFormat.UnicodeText); 
+                try { Logger.Log($"SetText ok, len={text?.Length ?? 0}"); } catch { } 
+                return true; 
+            }
+            catch (Exception ex) 
+            { 
+                try { Logger.Log($"SetText failed (retries left {retries}): {ex.GetType().Name}: {ex.Message}"); } catch { } 
+                if (retries == 0)
+                {
+                    NotificationService.ShowError("Failed to set clipboard text. Please try again.");
+                }
+                Thread.Sleep(50); 
+            }
         }
+        return false;
     }
 
-    public void Paste() 
+    public bool Paste() 
     { 
         try 
         { 
             Thread.Sleep(150); // Increased delay for better focus restoration
-            PasteWithMultipleMethods();
+            bool success = PasteWithMultipleMethods();
+            if (!success)
+            {
+                try { Logger.Log("All paste methods failed"); } catch { }
+                NotificationService.ShowError("Auto-paste failed. Please paste manually (Ctrl+V).");
+                return false;
+            }
+            return true;
         } 
-        catch (Exception ex) { try { Logger.Log($"Paste failed: {ex.GetType().Name}: {ex.Message}"); } catch { } } 
+        catch (Exception ex) 
+        { 
+            try { Logger.Log($"Paste failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            NotificationService.ShowError($"Paste operation failed: {ex.Message}");
+            return false;
+        } 
     }
 
-    private void PasteWithMultipleMethods()
+    private bool PasteWithMultipleMethods()
     {
         // Try multiple paste methods in order of reliability
         string[] methods = { "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
@@ -280,7 +310,7 @@ public sealed class ClipboardService
                 if (success) 
                 {
                     Logger.Log($"Paste successful with {method}");
-                    return;
+                    return true;
                 }
             }
             catch (Exception ex) 
@@ -292,7 +322,7 @@ public sealed class ClipboardService
             Thread.Sleep(50);
         }
         
-        Logger.Log("All paste methods failed");
+        return false;
     }
 
     private bool TryPasteCtrlV()

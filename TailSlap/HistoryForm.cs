@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -10,6 +11,11 @@ public sealed class HistoryForm : Form
     private TextBox _ref;
     private RichTextBox _diff;
     private TabControl _tabControl;
+    private System.Windows.Forms.Timer? _refreshTimer;
+    private FileSystemWatcher? _fileWatcher;
+    private DateTime _lastRefresh;
+    private int _lastCount;
+    private Button _refreshButton;
 
     public HistoryForm()
     {
@@ -18,6 +24,9 @@ public sealed class HistoryForm : Form
         Width = 950; Height = 620;
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
+        
+        InitializeRefreshTimer();
+        InitializeFileWatcher();
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 300 };
         _list = new ListBox { Dock = DockStyle.Fill, HorizontalScrollbar = true };
@@ -36,16 +45,27 @@ public sealed class HistoryForm : Form
         var copyR = new Button { Text = "Copy Refined", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         var copyO = new Button { Text = "Copy Original", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         var copyD = new Button { Text = "Copy Diff", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        copyR.Click += (_, __) => { try { Clipboard.SetText(_ref.Text); } catch { } };
-        copyO.Click += (_, __) => { try { Clipboard.SetText(_orig.Text); } catch { } };
-        copyD.Click += (_, __) => { try { Clipboard.SetText(_diff.Text); } catch { } };
-        buttons.Controls.Add(copyR); buttons.Controls.Add(copyO); buttons.Controls.Add(copyD);
+        _refreshButton = new Button { Text = "Refresh (F5)", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        
+        copyR.Click += (_, __) => { try { Clipboard.SetText(_ref.Text); NotificationService.ShowSuccess("Refined text copied to clipboard."); } catch { NotificationService.ShowError("Failed to copy refined text."); } };
+        copyO.Click += (_, __) => { try { Clipboard.SetText(_orig.Text); NotificationService.ShowSuccess("Original text copied to clipboard."); } catch { NotificationService.ShowError("Failed to copy original text."); } };
+        copyD.Click += (_, __) => { try { Clipboard.SetText(_diff.Text); NotificationService.ShowSuccess("Diff text copied to clipboard."); } catch { NotificationService.ShowError("Failed to copy diff text."); } };
+        _refreshButton.Click += (_, __) => RefreshHistory();
+        
+        buttons.Controls.Add(copyR); buttons.Controls.Add(copyO); buttons.Controls.Add(copyD); buttons.Controls.Add(_refreshButton);
 
         Controls.Add(split);
         Controls.Add(buttons);
 
-        Load += (_, __) => { Populate(); _tabControl.SelectedIndex = 2; };
+        Load += (_, __) => { Populate(); _tabControl.SelectedIndex = 2; _lastRefresh = DateTime.Now; _lastCount = _list.Items.Count; };
         _list.SelectedIndexChanged += (_, __) => ShowSelected();
+        
+        // Add keyboard shortcut for refresh
+        KeyPreview = true;
+        KeyDown += (s, e) => { if (e.KeyCode == Keys.F5) RefreshHistory(); };
+        
+        // Refresh when form gains focus
+        Activated += (_, __) => { if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(1)) RefreshHistory(); };
     }
 
     private void Populate()
@@ -162,5 +182,117 @@ public sealed class HistoryForm : Form
             _diff.AppendText(newWords[i] + (i < newWords.Length - 1 ? " " : ""));
         }
         _diff.AppendText("\n");
+    }
+
+    private void InitializeRefreshTimer()
+    {
+        _refreshTimer = new System.Windows.Forms.Timer { Interval = 2500 }; // 2.5 seconds
+        _refreshTimer.Tick += (_, __) => CheckForNewEntries();
+        _refreshTimer.Start();
+    }
+
+    private void InitializeFileWatcher()
+    {
+        try
+        {
+            string historyPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap", "history.jsonl");
+            string? historyDir = Path.GetDirectoryName(historyPath);
+            
+            if (Directory.Exists(historyDir))
+            {
+                _fileWatcher = new FileSystemWatcher(historyDir, "history.jsonl")
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size
+                };
+                _fileWatcher.Changed += (_, __) => 
+                {
+                    // Debounce file system events
+                    if (InvokeRequired)
+                    {
+                        Invoke(new Action(CheckForNewEntries));
+                    }
+                    else
+                    {
+                        CheckForNewEntries();
+                    }
+                };
+                _fileWatcher.EnableRaisingEvents = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"FileWatcher initialization failed: {ex.Message}"); } catch { }
+        }
+    }
+
+    private void CheckForNewEntries()
+    {
+        try
+        {
+            var currentItems = HistoryService.ReadAll();
+            if (currentItems.Count != _lastCount)
+            {
+                RefreshHistory();
+            }
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"CheckForNewEntries failed: {ex.Message}"); } catch { }
+        }
+    }
+
+    private void RefreshHistory()
+    {
+        try
+        {
+            // Preserve current selection
+            int selectedIndex = _list.SelectedIndex;
+            string? selectedItem = selectedIndex >= 0 && selectedIndex < _list.Items.Count ? _list.Items[selectedIndex].ToString() : null;
+            
+            Populate();
+            
+            // Try to restore selection
+            if (!string.IsNullOrEmpty(selectedItem))
+            {
+                for (int i = 0; i < _list.Items.Count; i++)
+                {
+                    if (_list.Items[i].ToString() == selectedItem)
+                    {
+                        _list.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            
+            _lastRefresh = DateTime.Now;
+            _lastCount = _list.Items.Count;
+            
+            // Update button text to show last refresh
+            _refreshButton.Text = $"Refresh (F5) - {_lastRefresh:HH:mm:ss}";
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"RefreshHistory failed: {ex.Message}"); } catch { }
+            NotificationService.ShowError("Failed to refresh history.");
+        }
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        try
+        {
+            if (_refreshTimer != null)
+            {
+                _refreshTimer.Stop();
+                _refreshTimer.Dispose();
+            }
+            if (_fileWatcher != null)
+            {
+                _fileWatcher.EnableRaisingEvents = false;
+                _fileWatcher.Dispose();
+            }
+        }
+        catch { }
+        base.OnFormClosed(e);
     }
 }

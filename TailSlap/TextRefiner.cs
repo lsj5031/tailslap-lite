@@ -25,7 +25,20 @@ public sealed class TextRefiner
 
     public async Task<string> RefineAsync(string text, CancellationToken ct = default)
     {
-        if (!_cfg.Enabled) throw new InvalidOperationException("LLM processing is disabled.");
+        if (!_cfg.Enabled) 
+        {
+            var errorMsg = "LLM processing is disabled. Enable it in Settings.";
+            NotificationService.ShowWarning(errorMsg);
+            throw new InvalidOperationException(errorMsg);
+        }
+        
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            var errorMsg = "Cannot refine empty text.";
+            NotificationService.ShowWarning(errorMsg);
+            throw new ArgumentException(errorMsg);
+        }
+        
         var endpoint = Combine(_cfg.BaseUrl.TrimEnd('/'), "chat/completions");
         try { Logger.Log($"Calling LLM endpoint: {endpoint}, model={_cfg.Model}, temp={_cfg.Temperature}"); } catch { }
         try { Logger.Log($"LLM input fingerprint: len={text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"); } catch { }
@@ -38,7 +51,7 @@ public sealed class TextRefiner
             Messages = new()
             {
                 new() { Role = "system", Content = "You are a concise writing assistant. Improve grammar, clarity, and tone without changing meaning. Preserve formatting and line breaks. Return only the improved text." },
-                new() { Role = "user", Content = text }
+                new() { Role = "user", Content = text ?? string.Empty }
             }
         };
 
@@ -57,10 +70,16 @@ public sealed class TextRefiner
                     if ((int)resp.StatusCode >= 500 || resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                     {
                         try { Logger.Log("Retryable status; backing off 1s"); } catch { }
-                        if (attempts > 0) await Task.Delay(1000, ct);
-                        continue;
+                        if (attempts > 0) 
+                        {
+                            NotificationService.ShowWarning($"Server busy ({resp.StatusCode}). Retrying...");
+                            await Task.Delay(1000, ct);
+                            continue;
+                        }
                     }
                     var errorBody = await resp.Content.ReadAsStringAsync(ct);
+                    var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
+                    NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
                     throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
                 }
 
@@ -77,7 +96,26 @@ public sealed class TextRefiner
                 await Task.Delay(1000, ct);
             }
         }
-        throw new Exception("Max retries exceeded for LLM request.");
+        var finalError = "LLM service unavailable after multiple attempts. Please check your connection and settings.";
+        NotificationService.ShowError(finalError);
+        throw new Exception(finalError);
+    }
+
+    private static string GetUserFriendlyError(System.Net.HttpStatusCode statusCode, string errorBody)
+    {
+        return statusCode switch
+        {
+            System.Net.HttpStatusCode.Unauthorized => "Invalid API key or authentication failed. Check your settings.",
+            System.Net.HttpStatusCode.Forbidden => "Access forbidden. Verify your API permissions.",
+            System.Net.HttpStatusCode.NotFound => "LLM endpoint not found. Check the Base URL in settings.",
+            System.Net.HttpStatusCode.BadRequest => "Invalid request. Check model configuration.",
+            System.Net.HttpStatusCode.TooManyRequests => "Rate limit exceeded. Please wait before trying again.",
+            System.Net.HttpStatusCode.InternalServerError => "LLM server error. Try again later.",
+            System.Net.HttpStatusCode.BadGateway => "LLM service unavailable. Try again later.",
+            System.Net.HttpStatusCode.ServiceUnavailable => "LLM service temporarily unavailable. Try again later.",
+            System.Net.HttpStatusCode.GatewayTimeout => "LLM request timed out. Check your connection.",
+            _ => $"Server error ({(int)statusCode}). Please try again."
+        };
     }
 
     private static string Combine(string a, string b) => a.EndsWith("/") ? a + b : a + "/" + b;

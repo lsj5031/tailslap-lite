@@ -26,7 +26,11 @@ public static class HistoryService
             File.AppendAllText(FilePath, JsonSerializer.Serialize(entry) + Environment.NewLine);
             Trim();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"History append failed: {ex.Message}"); } catch { }
+            NotificationService.ShowError("Failed to save history entry. Check disk space and permissions.");
+        }
     }
 
     public static List<Entry> ReadAll()
@@ -38,10 +42,18 @@ public static class HistoryService
             foreach (var line in File.ReadAllLines(FilePath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                try { var e = JsonSerializer.Deserialize<Entry>(line); if (e != null) list.Add(e); } catch { }
+                try { var e = JsonSerializer.Deserialize<Entry>(line); if (e != null) list.Add(e); } 
+                catch (JsonException ex)
+                {
+                    try { Logger.Log($"History entry parse error: {ex.Message}"); } catch { }
+                }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"History read failed: {ex.Message}"); } catch { }
+            NotificationService.ShowError("Failed to read history. File may be corrupted.");
+        }
         return list;
     }
 
@@ -56,6 +68,10 @@ public static class HistoryService
             foreach (var e in trimmed) lines.Add(JsonSerializer.Serialize(e));
             File.WriteAllLines(FilePath, lines);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"History trim failed: {ex.Message}"); } catch { }
+            NotificationService.ShowWarning("Failed to trim history file. File may grow large.");
+        }
     }
 }

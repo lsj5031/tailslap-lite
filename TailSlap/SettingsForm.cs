@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 public sealed class SettingsForm : Form
@@ -15,6 +16,9 @@ public sealed class SettingsForm : Form
     private TextBox _apiKey;
     private TextBox _referer;
     private TextBox _xTitle;
+    private Button _resetButton;
+    private Button _testConnectionButton;
+    private Label _validationLabel;
 
     public SettingsForm(AppConfig cfg)
     {
@@ -75,6 +79,14 @@ public sealed class SettingsForm : Form
         llm.Controls.Add(new Label { Text = "X-Title", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 7);
         llm.Controls.Add(_xTitle, 1, 7);
 
+        // Add validation label and buttons
+        _validationLabel = new Label { Text = "", ForeColor = Color.Red, AutoSize = true, Dock = DockStyle.Bottom, Padding = new Padding(10) };
+        _testConnectionButton = new Button { Text = "Test Connection", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        _resetButton = new Button { Text = "Reset to Defaults", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        
+        _testConnectionButton.Click += TestConnection;
+        _resetButton.Click += ResetToDefaults;
+
         var generalPage = new TabPage("General") { AutoScroll = true };
         generalPage.Controls.Add(general);
         var llmPage = new TabPage("LLM") { AutoScroll = true };
@@ -85,19 +97,36 @@ public sealed class SettingsForm : Form
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Padding = new Padding(10), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false };
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        
         buttons.Controls.Add(ok);
         buttons.Controls.Add(cancel);
+        buttons.Controls.Add(_testConnectionButton);
+        buttons.Controls.Add(_resetButton);
 
         Controls.Add(tabs);
         Controls.Add(buttons);
+        Controls.Add(_validationLabel);
 
         AcceptButton = ok; CancelButton = cancel;
 
         ok.Click += (_, __) => ApplyChanges();
+        
+        // Add real-time validation
+        _baseUrl.TextChanged += ValidateInput;
+        _temperature.TextChanged += ValidateInput;
+        _maxTokens.TextChanged += ValidateInput;
+        _model.TextChanged += ValidateInput;
     }
 
     private void ApplyChanges()
     {
+        if (!ValidateAllInput())
+        {
+            NotificationService.ShowError("Please fix validation errors before saving.");
+            DialogResult = DialogResult.None;
+            return;
+        }
+
         _cfg.AutoPaste = _autoPaste.Checked;
         _cfg.Llm.Enabled = _enabled.Checked;
         _cfg.Llm.BaseUrl = _baseUrl.Text.Trim();
@@ -110,5 +139,115 @@ public sealed class SettingsForm : Form
         _cfg.Llm.HttpReferer = string.IsNullOrWhiteSpace(_referer.Text) ? null : _referer.Text.Trim();
         _cfg.Llm.XTitle = string.IsNullOrWhiteSpace(_xTitle.Text) ? null : _xTitle.Text.Trim();
         _cfg.UseClipboardFallback = _clipboardFallback.Checked;
+    }
+
+    private void ValidateInput(object? sender, EventArgs e)
+    {
+        var errors = new System.Collections.Generic.List<string>();
+        
+        // Validate URL
+        if (!string.IsNullOrWhiteSpace(_baseUrl.Text))
+        {
+            if (!Uri.TryCreate(_baseUrl.Text, UriKind.Absolute, out var uri) || 
+                (uri.Scheme != "http" && uri.Scheme != "https"))
+            {
+                errors.Add("Base URL must be a valid HTTP/HTTPS URL");
+            }
+        }
+        
+        // Validate temperature
+        if (!string.IsNullOrWhiteSpace(_temperature.Text))
+        {
+            if (!double.TryParse(_temperature.Text, out var temp) || temp < 0 || temp > 2)
+            {
+                errors.Add("Temperature must be between 0 and 2");
+            }
+        }
+        
+        // Validate max tokens
+        if (!string.IsNullOrWhiteSpace(_maxTokens.Text))
+        {
+            if (!int.TryParse(_maxTokens.Text, out var tokens) || tokens <= 0 || tokens > 32768)
+            {
+                errors.Add("Max tokens must be between 1 and 32768");
+            }
+        }
+        
+        // Validate model name
+        if (string.IsNullOrWhiteSpace(_model.Text))
+        {
+            errors.Add("Model name is required");
+        }
+        
+        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
+        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
+    }
+
+    private bool ValidateAllInput()
+    {
+        ValidateInput(null, EventArgs.Empty!);
+        return string.IsNullOrEmpty(_validationLabel.Text) || _validationLabel.ForeColor == Color.Green;
+    }
+
+    private async void TestConnection(object? sender, EventArgs e)
+    {
+        try
+        {
+            _testConnectionButton.Enabled = false;
+            _testConnectionButton.Text = "Testing...";
+            
+            var testConfig = new LlmConfig
+            {
+                Enabled = true,
+                BaseUrl = _baseUrl.Text.Trim(),
+                Model = _model.Text.Trim(),
+                Temperature = double.TryParse(_temperature.Text.Trim(), out var t) ? t : 0.2,
+                MaxTokens = string.IsNullOrWhiteSpace(_maxTokens.Text) ? null : (int?)int.Parse(_maxTokens.Text),
+                ApiKey = _apiKey.Text.Trim(),
+                HttpReferer = string.IsNullOrWhiteSpace(_referer.Text) ? null : _referer.Text.Trim(),
+                XTitle = string.IsNullOrWhiteSpace(_xTitle.Text) ? null : _xTitle.Text.Trim()
+            };
+            
+            var testRefiner = new TextRefiner(testConfig);
+            await testRefiner.RefineAsync("Test connection", System.Threading.CancellationToken.None);
+            
+            NotificationService.ShowSuccess("Connection test successful!");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.ShowError($"Connection test failed: {ex.Message}");
+        }
+        finally
+        {
+            _testConnectionButton.Enabled = true;
+            _testConnectionButton.Text = "Test Connection";
+        }
+    }
+
+    private void ResetToDefaults(object? sender, EventArgs e)
+    {
+        var result = MessageBox.Show(
+            "This will reset all settings to their default values. Are you sure?",
+            "Reset to Defaults",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+            
+        if (result == DialogResult.Yes)
+        {
+            var defaultCfg = new AppConfig();
+            
+            _autoPaste.Checked = defaultCfg.AutoPaste;
+            _enabled.Checked = defaultCfg.Llm.Enabled;
+            _clipboardFallback.Checked = defaultCfg.UseClipboardFallback;
+            _baseUrl.Text = defaultCfg.Llm.BaseUrl;
+            _model.Text = defaultCfg.Llm.Model;
+            _temperature.Text = defaultCfg.Llm.Temperature.ToString("0.##");
+            _maxTokens.Text = defaultCfg.Llm.MaxTokens?.ToString() ?? "";
+            _apiKey.Text = "";
+            _referer.Text = defaultCfg.Llm.HttpReferer ?? "";
+            _xTitle.Text = defaultCfg.Llm.XTitle ?? "";
+            
+            NotificationService.ShowInfo("Settings reset to defaults.");
+        }
     }
 }
