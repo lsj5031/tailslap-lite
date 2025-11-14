@@ -11,21 +11,16 @@ using System.Threading.Tasks;
 public sealed class TextRefiner
 {
     private readonly LlmConfig _cfg;
-    private readonly HttpClient _http;
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public TextRefiner(LlmConfig cfg)
     {
         _cfg = cfg;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 
         var hasApiKey = !string.IsNullOrWhiteSpace(_cfg.ApiKey);
         var hasReferer = !string.IsNullOrWhiteSpace(_cfg.HttpReferer);
         var hasXTitle = !string.IsNullOrWhiteSpace(_cfg.XTitle);
-
-        if (hasApiKey) _http.DefaultRequestHeaders.Authorization = new("Bearer", _cfg.ApiKey);
-        if (hasReferer) _http.DefaultRequestHeaders.TryAddWithoutValidation("Referer", _cfg.HttpReferer);
-        if (hasXTitle) _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Title", _cfg.XTitle);
 
         try
         {
@@ -76,8 +71,20 @@ public sealed class TextRefiner
             {
                 var json = JsonSerializer.Serialize(req, JsonOpts);
                 try { Logger.Log($"LLM request json size={json.Length} chars"); } catch { }
-                using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                using var resp = await _http.PostAsync(endpoint, content, ct).ConfigureAwait(false);
+                
+                var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                };
+                
+                if (!string.IsNullOrWhiteSpace(_cfg.ApiKey))
+                    request.Headers.Authorization = new("Bearer", _cfg.ApiKey);
+                if (!string.IsNullOrWhiteSpace(_cfg.HttpReferer))
+                    request.Headers.TryAddWithoutValidation("Referer", _cfg.HttpReferer);
+                if (!string.IsNullOrWhiteSpace(_cfg.XTitle))
+                    request.Headers.TryAddWithoutValidation("X-Title", _cfg.XTitle);
+                
+                using var resp = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 try { Logger.Log($"LLM response status: {(int)resp.StatusCode} {resp.StatusCode}"); } catch { }
                 if (!resp.IsSuccessStatusCode)
                 {

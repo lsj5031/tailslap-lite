@@ -527,12 +527,12 @@ public sealed class ClipboardService
         return false;
     }
 
-    public bool Paste() 
+    public async System.Threading.Tasks.Task<bool> PasteAsync() 
     { 
         try 
         { 
-            Thread.Sleep(150); // Increased delay for better focus restoration
-            bool success = PasteWithMultipleMethods();
+            await Task.Delay(150).ConfigureAwait(true); // Increased delay for better focus restoration
+            bool success = await PasteWithMultipleMethodsAsync();
             if (!success)
             {
                 try { Logger.Log("All paste methods failed"); } catch { }
@@ -549,7 +549,7 @@ public sealed class ClipboardService
         } 
     }
 
-    private bool PasteWithMultipleMethods()
+    private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()
     {
         // Try multiple paste methods in order of reliability
         string[] methods = { "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
@@ -562,9 +562,9 @@ public sealed class ClipboardService
                 
                 bool success = method switch
                 {
-                    "Ctrl+V" => TryPasteCtrlV(),
-                    "Shift+Insert" => TryPasteShiftInsert(),
-                    "SendInput Ctrl+V" => TryPasteSendInput(),
+                    "Ctrl+V" => await TryPasteCtrlVAsync(),
+                    "Shift+Insert" => await TryPasteShiftInsertAsync(),
+                    "SendInput Ctrl+V" => await TryPasteSendInputAsync(),
                     _ => false
                 };
                 
@@ -580,42 +580,42 @@ public sealed class ClipboardService
             }
             
             // Brief delay between methods
-            Thread.Sleep(50);
+            await Task.Delay(50).ConfigureAwait(true);
         }
         
         return false;
     }
 
-    private bool TryPasteCtrlV()
+    private async System.Threading.Tasks.Task<bool> TryPasteCtrlVAsync()
     {
         try
         {
             SendKeys.SendWait("^v");
-            Thread.Sleep(30);
+            await Task.Delay(30).ConfigureAwait(true);
             return true;
         }
         catch { return false; }
     }
 
-    private bool TryPasteShiftInsert()
+    private async System.Threading.Tasks.Task<bool> TryPasteShiftInsertAsync()
     {
         try
         {
             SendKeys.SendWait("+{INSERT}");
-            Thread.Sleep(30);
+            await Task.Delay(30).ConfigureAwait(true);
             return true;
         }
         catch { return false; }
     }
 
-    private bool TryPasteSendInput()
+    private async System.Threading.Tasks.Task<bool> TryPasteSendInputAsync()
     {
         try
         {
             // Use SendInput for more reliable paste
             ushort[] modifiers = { 0x11 /*CTRL*/ };
             SendChordScancode(modifiers, 0x56 /*'V'*/);
-            Thread.Sleep(30);
+            await Task.Delay(30).ConfigureAwait(true);
             return true;
         }
         catch { return false; }
@@ -623,8 +623,9 @@ public sealed class ClipboardService
 
     private static string? TryGetSelectionViaUIA()
     {
-        // Use MTA thread for UI Automation as per Microsoft recommendations
-        // This prevents COM marshaling crashes with applications like Firefox
+        // Use MTA thread for UI Automation as per Microsoft recommendations.
+        // AutomationElement instances do not implement IDisposable and require no explicit Dispose/using.
+        // This prevents COM marshaling crashes with applications like Firefox.
         var uiaTask = RunInMtaForUIA(() =>
         {
             try
@@ -1205,7 +1206,7 @@ public sealed class ClipboardService
             catch (Exception ex) { tcs.SetException(ex); }
         });
         th.IsBackground = true;
-        th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
+        th.SetApartmentState(ApartmentState.STA); // Use STA for clipboard operations (required for System.Windows.Forms.Clipboard)
         th.Start();
         return tcs.Task;
     }

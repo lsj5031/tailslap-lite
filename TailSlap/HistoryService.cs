@@ -7,7 +7,7 @@ public static class HistoryService
 {
     private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap");
     private static string FilePath => Path.Combine(Dir, "history.jsonl");
-    private const int MaxEntries = 50;
+    private const int MaxEntries = 50; // MaxEntries bounds history size; Trim() intentionally re-reads and rewrites only the last 50 entries for simplicity with small limits
 
     public sealed class Entry
     {

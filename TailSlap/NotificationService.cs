@@ -10,6 +10,7 @@ public static class NotificationService
     private static readonly object _lockObject = new();
     private static bool _isProcessing = false;
     private static NotifyIcon? _trayIcon;
+    private static SynchronizationContext? _uiContext;
 
     public enum NotificationType
     {
@@ -30,6 +31,7 @@ public static class NotificationService
     public static void Initialize(NotifyIcon trayIcon)
     {
         _trayIcon = trayIcon ?? throw new ArgumentNullException(nameof(trayIcon));
+        _uiContext = SynchronizationContext.Current;
     }
 
     public static void ShowInfo(string message, string title = "TailSlap")
@@ -91,24 +93,23 @@ public static class NotificationService
         lock (_lockObject)
         {
             _messageQueue.Enqueue(notification);
-        }
-
-        // Start processing if not already running
-        if (!_isProcessing)
-        {
-            _ = Task.Run(ProcessQueueAsync);
+            
+            // Start processing if not already running (inside the lock to prevent race)
+            if (!_isProcessing)
+            {
+                _isProcessing = true;
+                _ = ProcessQueueAsync();
+            }
         }
     }
 
     private static async Task ProcessQueueAsync()
     {
-        _isProcessing = true;
-
         try
         {
             while (true)
             {
-                NotificationMessage notification;
+                NotificationMessage? notification = null;
                 
                 lock (_lockObject)
                 {
@@ -121,17 +122,30 @@ public static class NotificationService
                     notification = _messageQueue.Dequeue();
                 }
 
-                // Show the notification on the UI thread
-                _ = Task.Run(() => ShowNotificationOnUiThread(notification));
-                
-                // Wait before showing the next notification
-                await Task.Delay(notification.DurationMs + 500);
+                if (notification != null)
+                {
+                    // Marshal notification display back to UI thread if possible
+                    if (_uiContext != null)
+                    {
+                        _uiContext.Post(_ => ShowNotificationOnUiThread(notification), null);
+                    }
+                    else
+                    {
+                        ShowNotificationOnUiThread(notification);
+                    }
+                    
+                    // Wait before showing the next notification
+                    await Task.Delay(notification.DurationMs + 500).ConfigureAwait(false);
+                }
             }
         }
         catch (Exception ex)
         {
             try { Logger.Log($"NotificationService error: {ex.Message}"); } catch { }
-            _isProcessing = false;
+            lock (_lockObject)
+            {
+                _isProcessing = false;
+            }
         }
     }
 
@@ -139,9 +153,6 @@ public static class NotificationService
     {
         try
         {
-            // Since NotifyIcon doesn't have InvokeRequired, we'll use a different approach
-            // We'll show the notification directly as it's already on the UI thread in most cases
-
             var icon = notification.Type switch
             {
                 NotificationType.Success => ToolTipIcon.Info,

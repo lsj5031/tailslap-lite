@@ -19,6 +19,14 @@ internal static class Program
         if (!created) return;
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        try
+        {
+            Application.Run(new MainForm());
+        }
+        finally
+        {
+            // Flush any remaining queued log entries on shutdown
+            Logger.Shutdown();
+        }
     }
 }

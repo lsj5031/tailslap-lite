@@ -1,16 +1,115 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 public static class Logger
 {
     private static string LogPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log");
+    
+    private static readonly ConcurrentQueue<string> LogQueue = new();
+    private static readonly SemaphoreSlim WriterSignal = new(0);
+    private static readonly Task WriterTask;
+    private static volatile bool _shuttingDown = false;
+
+    static Logger()
+    {
+        WriterTask = BackgroundWriterLoop();
+    }
 
     public static void Log(string message)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}\n");
+            var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}";
+            LogQueue.Enqueue(line);
+            WriterSignal.Release();
+        }
+        catch { }
+    }
+
+    private static async Task BackgroundWriterLoop()
+    {
+        try
+        {
+            while (!_shuttingDown)
+            {
+                try
+                {
+                    // Wait for signal with timeout to periodically flush
+                    await WriterSignal.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                }
+                catch { }
+
+                // Process queued items
+                int itemsWritten = 0;
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+                    
+                    while (LogQueue.TryDequeue(out var line) && itemsWritten < 100)
+                    {
+                        try
+                        {
+                            File.AppendAllText(LogPath, line + "\n");
+                            itemsWritten++;
+                        }
+                        catch
+                        {
+                            // Ignore individual write failures and continue
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore I/O failures; loop continues
+                }
+            }
+
+            // Final flush on shutdown
+            while (LogQueue.TryDequeue(out var line))
+            {
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+                    File.AppendAllText(LogPath, line + "\n");
+                }
+                catch { }
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Optionally call this to wait until all queued logs are written (useful on shutdown).
+    /// </summary>
+    public static void Flush()
+    {
+        try
+        {
+            // Wait a bit for the writer to process remaining items
+            int attempts = 0;
+            while (LogQueue.Count > 0 && attempts < 10)
+            {
+                Thread.Sleep(50);
+                attempts++;
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Call this on application shutdown to gracefully stop the writer thread.
+    /// </summary>
+    public static void Shutdown()
+    {
+        try
+        {
+            _shuttingDown = true;
+            WriterSignal.Release();
+            // Give the writer thread a moment to finish
+            WriterTask.Wait(TimeSpan.FromSeconds(2));
         }
         catch { }
     }

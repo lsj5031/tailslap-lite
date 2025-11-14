@@ -22,6 +22,8 @@ public class MainForm : Form
     private readonly ClipboardService _clip;
     private uint _currentMods;
     private uint _currentVk;
+    private AppConfig _currentConfig;
+    private bool _isRefining;
 
     public MainForm()
     {
@@ -30,16 +32,16 @@ public class MainForm : Form
         Visible = false;
 
         _config = new ConfigService();
-        var cfg = _config.LoadOrDefault();
+        _currentConfig = _config.LoadOrDefault();
         _clip = new ClipboardService();
 
         _menu = new ContextMenuStrip();
-        _menu.Items.Add("Refine Now", null, async (_, __) => await RefineSelectionAsync());
-        var autoPasteItem = new ToolStripMenuItem("Auto Paste") { Checked = cfg.AutoPaste };
-        autoPasteItem.Click += (_, __) => { cfg.AutoPaste = !cfg.AutoPaste; autoPasteItem.Checked = cfg.AutoPaste; _config.Save(cfg); };
+        _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
+        var autoPasteItem = new ToolStripMenuItem("Auto Paste") { Checked = _currentConfig.AutoPaste };
+        autoPasteItem.Click += (_, __) => { _currentConfig.AutoPaste = !_currentConfig.AutoPaste; autoPasteItem.Checked = _currentConfig.AutoPaste; _config.Save(_currentConfig); };
         _menu.Items.Add(autoPasteItem);
-        _menu.Items.Add("Change Hotkey", null, (_, __) => ChangeHotkey(cfg));
-        _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(cfg));
+        _menu.Items.Add("Change Hotkey", null, (_, __) => ChangeHotkey(_currentConfig));
+        _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(_currentConfig));
         _menu.Items.Add("Open Logs...", null, (_, __) => { try { Process.Start("notepad", System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log")); } catch { NotificationService.ShowError("Failed to open logs."); } });
         _menu.Items.Add("History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
         var autoStartItem = new ToolStripMenuItem("Start with Windows") { Checked = AutoStartService.IsEnabled("TailSlap") };
@@ -48,7 +50,7 @@ public class MainForm : Form
         _menu.Items.Add("Quit", null, (_, __) => { Application.Exit(); });
 
         _idleIcon = LoadIdleIcon();
-        _frames = LoadChewingFramesOrFallback();
+        _frames = LoadChewingFramesOrFallback(); // Icons are preloaded here to avoid per-frame allocations during animation
 
         _tray = new NotifyIcon { Icon = _idleIcon, Visible = true, Text = "TailSlap" };
         _tray.ContextMenuStrip = _menu;
@@ -63,9 +65,9 @@ public class MainForm : Form
             if (_frame % 4 == 0) _tray.Text = "TailSlap - Processing...";
             else _tray.Text = "TailSlap";
         };
-        _currentMods = cfg.Hotkey.Modifiers;
-        _currentVk = cfg.Hotkey.Key;
-        try { Logger.Log($"MainForm initialized. Planned hotkey mods={_currentMods}, key={_currentVk}"); } catch { }
+        _currentMods = _currentConfig.Hotkey.Modifiers;
+        _currentVk = _currentConfig.Hotkey.Key;
+        Logger.Log($"MainForm initialized. Planned hotkey mods={_currentMods}, key={_currentVk}");
     }
 
     private Icon[] LoadChewingFramesOrFallback()
@@ -108,7 +110,7 @@ public class MainForm : Form
             
             if (list.Count > 0) 
             {
-                try { Logger.Log($"Loaded {list.Count} animation frames at {preferredSize}px"); } catch { }
+                Logger.Log($"Loaded {list.Count} animation frames at {preferredSize}px");
                 return list.ToArray();
             }
         }
@@ -138,7 +140,7 @@ public class MainForm : Form
                     try 
                     { 
                         var icon = new Icon(p, preferredSize, preferredSize);
-                        try { Logger.Log($"Loaded idle icon at {preferredSize}px from {p}"); } catch { }
+                        Logger.Log($"Loaded idle icon at {preferredSize}px from {p}");
                         return icon;
                     } 
                     catch 
@@ -165,7 +167,7 @@ public class MainForm : Form
                 try 
                 { 
                     var icon = new Icon(mainIconPath, preferredSize, preferredSize);
-                    try { Logger.Log($"Loaded main icon at {preferredSize}px from {mainIconPath}"); } catch { }
+                    Logger.Log($"Loaded main icon at {preferredSize}px from {mainIconPath}");
                     return icon;
                 } 
                 catch 
@@ -226,10 +228,21 @@ public class MainForm : Form
     {
         if (m.Msg == WM_HOTKEY)
         {
-            try { Logger.Log("WM_HOTKEY received"); } catch { }
-            _ = RefineSelectionAsync();
+            Logger.Log("WM_HOTKEY received");
+            TriggerRefine();
         }
         base.WndProc(ref m);
+    }
+
+    private void TriggerRefine()
+    {
+        if (_isRefining)
+        {
+            try { NotificationService.ShowWarning("Refinement already in progress. Please wait."); } catch { }
+            return;
+        }
+        _isRefining = true;
+        _ = RefineSelectionAsync().ContinueWith(_ => _isRefining = false);
     }
 
     private async Task RefineSelectionAsync()
@@ -237,18 +250,17 @@ public class MainForm : Form
         try
         {
             StartAnim();
-            var cfg = _config.LoadOrDefault();
-            try { Logger.Log("Starting capture from selection/clipboard"); } catch { }
-            var text = await _clip.CaptureSelectionOrClipboardAsync(cfg.UseClipboardFallback);
-            try { Logger.Log($"Captured length: {text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"); } catch { }
+            Logger.Log("Starting capture from selection/clipboard");
+            var text = await _clip.CaptureSelectionOrClipboardAsync(_currentConfig.UseClipboardFallback);
+            Logger.Log($"Captured length: {text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}");
             if (string.IsNullOrWhiteSpace(text)) 
             { 
                 try { NotificationService.ShowWarning("No text selected or in clipboard."); } catch { }
                 return; 
             }
-            var refiner = new TextRefiner(cfg.Llm);
+            var refiner = new TextRefiner(_currentConfig.Llm);
             var refined = await refiner.RefineAsync(text);
-            try { Logger.Log($"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"); } catch { }
+            Logger.Log($"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}");
             if (string.IsNullOrWhiteSpace(refined)) 
             { 
                 try { NotificationService.ShowError("Provider returned empty result."); } catch { }
@@ -262,10 +274,10 @@ public class MainForm : Form
             }
             
             await Task.Delay(100);
-            if (cfg.AutoPaste) 
+            if (_currentConfig.AutoPaste) 
             { 
-                try { Logger.Log("Auto-paste attempt"); } catch { } 
-                bool pasteSuccess = _clip.Paste();
+                Logger.Log("Auto-paste attempt");
+                bool pasteSuccess = await _clip.PasteAsync().ConfigureAwait(true);
                 if (!pasteSuccess)
                 {
                     // Error already shown by Paste method, but we can continue
@@ -277,13 +289,13 @@ public class MainForm : Form
                 try { NotificationService.ShowTextReadyNotification(); } catch { }
             }
             
-            try { HistoryService.Append(text, refined, cfg.Llm.Model); } catch { }
-            try { Logger.Log("Refinement completed successfully."); } catch { }
+            try { HistoryService.Append(text, refined, _currentConfig.Llm.Model); } catch { }
+            Logger.Log("Refinement completed successfully.");
         }
         catch (Exception ex) 
         { 
             try { NotificationService.ShowError("Refinement failed: " + ex.Message); } catch { }
-            try { Logger.Log("Error: " + ex.Message); } catch { }
+            Logger.Log("Error: " + ex.Message);
         }
         finally { StopAnim(); }
     }
@@ -318,7 +330,7 @@ public class MainForm : Form
         if (mods == 0) mods = 0x0003;
         if (vk == 0) vk = (uint)Keys.R;
         var ok = RegisterHotKey(Handle, HOTKEY_ID, mods, vk);
-        try { Logger.Log($"RegisterHotKey mods={mods}, key={vk}, ok={ok}"); } catch { }
+        Logger.Log($"RegisterHotKey mods={mods}, key={vk}, ok={ok}");
         if (!ok) NotificationService.ShowError("Failed to register hotkey.");
     }
 
@@ -340,7 +352,7 @@ public class MainForm : Form
         using var dlg = new SettingsForm(cfg);
         if (dlg.ShowDialog() == DialogResult.OK)
         {
-            _config.Save(cfg);
+            _config.Save(_currentConfig);
             NotificationService.ShowSuccess("Settings saved.");
         }
     }
