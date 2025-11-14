@@ -18,9 +18,23 @@ public sealed class TextRefiner
     {
         _cfg = cfg;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        if (!string.IsNullOrWhiteSpace(_cfg.ApiKey)) _http.DefaultRequestHeaders.Authorization = new("Bearer", _cfg.ApiKey);
-        if (!string.IsNullOrWhiteSpace(_cfg.HttpReferer)) _http.DefaultRequestHeaders.TryAddWithoutValidation("Referer", _cfg.HttpReferer);
-        if (!string.IsNullOrWhiteSpace(_cfg.XTitle)) _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Title", _cfg.XTitle);
+
+        var hasApiKey = !string.IsNullOrWhiteSpace(_cfg.ApiKey);
+        var hasReferer = !string.IsNullOrWhiteSpace(_cfg.HttpReferer);
+        var hasXTitle = !string.IsNullOrWhiteSpace(_cfg.XTitle);
+
+        if (hasApiKey) _http.DefaultRequestHeaders.Authorization = new("Bearer", _cfg.ApiKey);
+        if (hasReferer) _http.DefaultRequestHeaders.TryAddWithoutValidation("Referer", _cfg.HttpReferer);
+        if (hasXTitle) _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Title", _cfg.XTitle);
+
+        try
+        {
+            Logger.Log(
+                $"LLM client init: baseUrl={_cfg.BaseUrl}, model={_cfg.Model}, temp={_cfg.Temperature}, " +
+                $"maxTokens={_cfg.MaxTokens?.ToString() ?? "null"}, hasApiKey={hasApiKey}, " +
+                $"hasReferer={hasReferer}, hasXTitle={hasXTitle}");
+        }
+        catch { }
     }
 
     public async Task<string> RefineAsync(string text, CancellationToken ct = default)

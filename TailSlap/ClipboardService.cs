@@ -268,9 +268,19 @@ public sealed class ClipboardService
             windowClass = "(analysis error)";
         }
 
-        // 1) Try UI Automation first (but skip for Firefox due to COM crashes)
+        // 1) Try UI Automation first (but skip for some window classes due to stability issues)
         bool isFirefox = windowClass.Equals("MozillaWindowClass", StringComparison.Ordinal);
-        if (!isFirefox)
+        bool isSublime = IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS");
+        bool isNotepad = windowClass.Equals("Notepad", StringComparison.Ordinal);
+        bool skipUIA = isFirefox || isNotepad;
+        try
+        {
+            Logger.Log(
+                $"Step 3c: Special-case window detection: isFirefox={isFirefox}, isSublime={isSublime}, isNotepad={isNotepad}, " +
+                $"useClipboardFallback={useClipboardFallback}, originalClipboardLen={(originalClipboard?.Length ?? 0)}");
+        }
+        catch { }
+        if (!skipUIA)
         {
             try
             {
@@ -310,13 +320,17 @@ public sealed class ClipboardService
                 // Continue to other methods instead of crashing
             }
         }
-        else
+        else if (isFirefox)
         {
-            try { Logger.Log("Step 4: Skipping UI Automation for Firefox (MozillaWindowClass) to prevent COM crashes"); } catch { }
+            try { Logger.Log("Step 4: Skipping UI Automation for Firefox (MozillaWindowClass) to prevent COM crashes - will attempt copy methods"); } catch { }
+        }
+        else if (isNotepad)
+        {
+            try { Logger.Log("Step 4: Skipping UI Automation for Notepad window to avoid potential UIA instability - will attempt copy methods"); } catch { }
         }
 
-        // 1b) UIA deep search (caret point and subtree scan) - skip for Firefox
-        if (!isFirefox)
+        // 1b) UIA deep search (caret point and subtree scan) - skip for blacklisted windows
+        if (!skipUIA)
         {
             try
             {
@@ -330,9 +344,13 @@ public sealed class ClipboardService
             }
             catch (Exception ex) { try { Logger.Log($"UIA(deep) error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
         }
-        else
+        else if (isFirefox)
         {
             try { Logger.Log("Step 4b: Skipping UIA deep search for Firefox to prevent COM crashes"); } catch { }
+        }
+        else if (isNotepad)
+        {
+            try { Logger.Log("Step 4b: Skipping UIA deep search for Notepad to avoid potential UIA instability"); } catch { }
         }
 
         // 2) Win32 direct read (standard edit controls)
@@ -363,12 +381,20 @@ public sealed class ClipboardService
         int timeoutPrimary = 600;  // Reduced from 1200ms
         int timeoutAlt = 300;      // Reduced from 1200ms
         
+        // Firefox-specific strategy: prioritize SendKeys and use longer timeouts
+        if (isFirefox)
+        {
+            try { Logger.Log("Firefox: Starting Firefox-specific copy strategy..."); } catch { }
+            timeoutPrimary = 800; // Longer timeout for Firefox
+            timeoutAlt = 500;
+        }
+        
         try { Logger.Log("Step 6c: Starting SendKeys copy attempts..."); } catch { }
-        // Try SendKeys first (fastest for most apps)
+        // Try SendKeys first (fastest for most apps, especially reliable for Firefox)
         if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.SendKeysCtrlC, out var copied, timeoutPrimary))
         { 
-            try { Logger.Log($"Step 7: Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { 
-                try { Logger.Log("=== CAPTURE SUCCESS (SendKeys) ==="); } catch { }
+            try { Logger.Log($"Step 7: Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}"); } catch { 
+                try { Logger.Log($"=== CAPTURE SUCCESS (SendKeys){(isFirefox ? " [Firefox]" : "")} ==="); } catch { }
             } 
             return copied; 
         }
@@ -378,25 +404,102 @@ public sealed class ClipboardService
         { try { Logger.Log($"Falling back to original clipboard: len={originalClipboard.Length}"); } catch { } return originalClipboard!; }
         
         // Application-specific attempts with shorter timeouts
-        if (IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS")) // Sublime Text
+        if (isSublime) // Sublime Text
         {
+            try { Logger.Log("Sublime: SendKeys failed, trying Double Ctrl+C"); } catch { }
             if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.DoubleCtrlC, out copied, timeoutAlt))
             { try { Logger.Log($"Captured via Double Ctrl+C (Sublime): len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
         }
         
-        // Try standard Ctrl+C with shorter timeout
-        if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlC, out copied, timeoutAlt))
-        { try { Logger.Log($"Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
+        // Firefox-specific: try additional methods if SendKeys failed
+        if (isFirefox)
+        {
+            try { Logger.Log("Firefox: SendKeys failed, trying alternative copy methods..."); } catch { }
+            // Try standard Ctrl+C with SendInput for Firefox
+            if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlC, out copied, timeoutAlt))
+            { 
+                try { Logger.Log($"Firefox: Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { 
+                    try { Logger.Log("=== CAPTURE SUCCESS (Firefox Ctrl+C) ==="); } catch { }
+                } 
+                return copied; 
+            }
+            
+            // Try Ctrl+Insert as Firefox fallback
+            if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, 400))
+            { 
+                try { Logger.Log($"Firefox: Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { 
+                    try { Logger.Log("=== CAPTURE SUCCESS (Firefox Ctrl+Insert) ==="); } catch { }
+                } 
+                return copied; 
+            }
+        }
+        else
+        {
+            // Try standard Ctrl+C with shorter timeout for non-Firefox
+            if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlC, out copied, timeoutAlt))
+            { try { Logger.Log($"Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
+            
+            // Last resort methods with minimal timeout
+            if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, 200))
+            { try { Logger.Log($"Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
+        }
         
-        // Last resort methods with minimal timeout
-        if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, 200))
-        { try { Logger.Log($"Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
+        try { Logger.Log($"All copy attempts failed to update clipboard{(isFirefox ? " [Firefox]" : "")}"); } catch { }
+
+        // Fallback: try to use clipboard contents if allowed
+        if (useClipboardFallback)
+        {
+            string? fallback = originalClipboard;
+            // If original clipboard was empty, try reading current clipboard state
+            if (string.IsNullOrEmpty(fallback))
+            {
+                try
+                {
+                    if (Clipboard.ContainsText())
+                    {
+                        fallback = Clipboard.GetText(TextDataFormat.UnicodeText);
+                        try
+                        {
+                            Logger.Log(
+                                $"Fallback clipboard read: hasText=True, len={fallback?.Length ?? 0}{(isFirefox ? " [Firefox]" : "")}");
+                        }
+                        catch { }
+                    }
+                    else
+                    {
+                        try { Logger.Log("Fallback clipboard read: hasText=False"); } catch { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { Logger.Log($"Fallback clipboard read failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(fallback))
+            {
+                try
+                {
+                    Logger.Log(
+                        $"No selection captured; using clipboard fallback (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}, len={fallback.Length}");
+                }
+                catch { }
+                return fallback!;
+            }
+        }
         
-        try { Logger.Log("All copy attempts failed to update clipboard"); } catch { }
-        if (useClipboardFallback && (originalClipboard?.Length > 0))
-        { try { Logger.Log($"No selection captured; using original clipboard (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return originalClipboard!; }
-        try { Logger.Log($"Step FINAL: No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { }
-        try { Logger.Log("=== CAPTURE FAILED ==="); } catch { }
+        // Enhanced Firefox failure diagnostics when even fallback has nothing
+        if (isFirefox)
+        {
+            try { Logger.Log($"Firefox capture failed: No copy methods succeeded and no clipboard fallback available (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { }
+            try { Logger.Log("Firefox troubleshooting: Make sure text is highlighted in Firefox before triggering hotkey"); } catch { }
+            try { Logger.Log("=== CAPTURE FAILED (Firefox) ==="); } catch { }
+        }
+        else
+        {
+            try { Logger.Log($"Step FINAL: No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { }
+            try { Logger.Log("=== CAPTURE FAILED ==="); } catch { }
+        }
         return string.Empty;
     }
 
@@ -849,6 +952,15 @@ public sealed class ClipboardService
     private bool TryCopyAndRead(IntPtr hwnd, uint seqBefore, CopyMethod method, out string result, int timeoutMs = 1200)
     {
         result = string.Empty;
+        
+        // Enhanced Firefox diagnostics - declare in outer scope for exception handling
+        bool isFirefoxWindow = IsWindowClass(hwnd, "MozillaWindowClass");
+        if (isFirefoxWindow)
+        {
+            try { Logger.Log($"Firefox: Copy method {method} being attempted on Firefox window"); } catch { }
+            try { Logger.Log($"Firefox: Window details: {DescribeWindow(hwnd)}"); } catch { }
+        }
+        
         try
         {
             try { Logger.Log($"TryCopyAndRead start: method={method}, seqBefore={seqBefore}, timeoutMs={timeoutMs}"); } catch { }
@@ -920,10 +1032,42 @@ public sealed class ClipboardService
                     break;
             }
             var text = WaitForClipboardTextChange(seqBefore, timeoutMs);
-            if (!string.IsNullOrWhiteSpace(text)) { result = text!; try { Logger.Log($"TryCopyAndRead success: method={method}, len={text.Length}"); } catch { } return true; }
-            else { try { Logger.Log($"TryCopyAndRead no change: method={method}"); } catch { } }
+            if (!string.IsNullOrWhiteSpace(text)) 
+            { 
+                result = text!; 
+                if (isFirefoxWindow)
+                {
+                    try { Logger.Log($"Firefox: Copy method {method} SUCCEEDED: len={text.Length}, seq={seqBefore}->{GetClipboardSequenceNumber()}"); } catch { }
+                }
+                else
+                {
+                    try { Logger.Log($"TryCopyAndRead success: method={method}, len={text.Length}"); } catch { }
+                }
+                return true; 
+            }
+            else 
+            { 
+                if (isFirefoxWindow)
+                {
+                    try { Logger.Log($"Firefox: Copy method {method} FAILED: no clipboard change, seq={seqBefore}->{GetClipboardSequenceNumber()}"); } catch { }
+                }
+                else
+                {
+                    try { Logger.Log($"TryCopyAndRead no change: method={method}"); } catch { }
+                }
+            }
         }
-        catch (Exception ex) { try { Logger.Log($"TryCopyAndRead({method}) error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+        catch (Exception ex) 
+        { 
+            if (isFirefoxWindow)
+            {
+                try { Logger.Log($"Firefox: Copy method {method} EXCEPTION: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            }
+            else
+            {
+                try { Logger.Log($"TryCopyAndRead({method}) error: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            }
+        }
         return false;
     }
 

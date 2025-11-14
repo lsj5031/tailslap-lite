@@ -52,13 +52,26 @@ public sealed class ConfigService
             var txt = File.ReadAllText(FilePath);
             return JsonSerializer.Deserialize<AppConfig>(txt, JsonOpts) ?? new AppConfig();
         }
-        catch { return new AppConfig(); }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"Config load failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try { NotificationService.ShowError("Failed to load configuration. Using defaults instead."); } catch { }
+            return new AppConfig();
+        }
     }
 
     public void Save(AppConfig cfg)
     {
-        if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, JsonOpts));
+        try
+        {
+            if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"Config save failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try { NotificationService.ShowError("Failed to save configuration. Changes may not persist."); } catch { }
+        }
     }
 
     public string GetConfigPath() => FilePath;

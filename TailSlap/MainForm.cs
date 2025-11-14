@@ -20,7 +20,6 @@ public class MainForm : Form
 
     private readonly ConfigService _config;
     private readonly ClipboardService _clip;
-    private readonly TextRefiner _refiner;
     private uint _currentMods;
     private uint _currentVk;
 
@@ -33,7 +32,6 @@ public class MainForm : Form
         _config = new ConfigService();
         var cfg = _config.LoadOrDefault();
         _clip = new ClipboardService();
-        _refiner = new TextRefiner(cfg.Llm);
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, async (_, __) => await RefineSelectionAsync());
@@ -248,7 +246,8 @@ public class MainForm : Form
                 try { NotificationService.ShowWarning("No text selected or in clipboard."); } catch { }
                 return; 
             }
-            var refined = await _refiner.RefineAsync(text);
+            var refiner = new TextRefiner(cfg.Llm);
+            var refined = await refiner.RefineAsync(text);
             try { Logger.Log($"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"); } catch { }
             if (string.IsNullOrWhiteSpace(refined)) 
             { 
