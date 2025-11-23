@@ -1,6 +1,12 @@
 # TailSlap
 
-A Windows utility that enhances your clipboard and text refinement experience with AI-powered processing. TailSlap runs in the system tray and allows you to quickly refine selected text using LLM services.
+<div align="center">
+  <img src="TailSlap/Icons/TailSlap.ico" alt="TailSlap Logo" width="128" height="128">
+  
+  **A Windows utility that enhances your clipboard and text refinement experience with AI-powered processing.**
+  
+  TailSlap runs in the system tray and allows you to quickly refine selected text using LLM services.
+</div>
 
 ## Features
 
@@ -53,7 +59,15 @@ You can edit this file directly or use the Settings dialog in the system tray me
 Application logs are stored at:
 `%APPDATA%\TailSlap\app.log`
 
+## Animation
 
+TailSlap uses a cute animated icon that cycles through different "chewing" frames while processing text:
+
+| Idle | Processing 1 | Processing 2 | Processing 3 | Processing 4 |
+|------|--------------|--------------|--------------|--------------|
+| ![Idle](TailSlap/Icons/TailSlap.ico) | ![Chew1](TailSlap/Icons/Chewing1.ico) | ![Chew2](TailSlap/Icons/Chewing2.ico) | ![Chew3](TailSlap/Icons/Chewing3.ico) | ![Chew4](TailSlap/Icons/Chewing4.ico) |
+
+The animation plays with pulsing text ("TailSlap - Processing...") during LLM requests to give you visual feedback.
 
 ## Building from Source
 
