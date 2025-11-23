@@ -1,4 +1,6 @@
-# AGENTS.md
+# Development Guide
+
+This document contains internal development information for TailSlap contributors.
 
 ## Build & Run Commands
 

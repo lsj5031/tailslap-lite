@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+      working-directory: ./TailSlap
+
+    - name: Build Release
+      run: dotnet build -c Release --no-restore
+      working-directory: ./TailSlap
+
+    - name: Test (verify compilation)
+      run: dotnet build -c Release
+      working-directory: ./TailSlap
+
+    - name: Publish Framework-Dependent
+      run: dotnet publish -c Release
+      working-directory: ./TailSlap
+
+    - name: Upload Framework-Dependent Build
+      uses: actions/upload-artifact@v4
+      with:
+        name: TailSlap-framework-dependent
+        path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/
+        if-no-files-found: error
+
+  build-self-contained:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+      working-directory: ./TailSlap
+
+    - name: Publish Self-Contained
+      run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+      working-directory: ./TailSlap
+
+    - name: Upload Self-Contained Build
+      uses: actions/upload-artifact@v4
+      with:
+        name: TailSlap-self-contained
+        path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
+        if-no-files-found: error

@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+      working-directory: ./TailSlap
+
+    - name: Publish Framework-Dependent
+      run: dotnet publish -c Release
+      working-directory: ./TailSlap
+
+    - name: Publish Self-Contained
+      run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+      working-directory: ./TailSlap
+
+    - name: Package Framework-Dependent
+      run: |
+        cd TailSlap/bin/Release/net9.0-windows/win-x64/publish
+        Compress-Archive -Path * -DestinationPath TailSlap-framework-dependent.zip
+        move TailSlap-framework-dependent.zip ${{ github.workspace }}/
+      shell: powershell
+
+    - name: Package Self-Contained
+      run: |
+        cd TailSlap/bin/Release/net9.0-windows/win-x64/publish
+        Rename-Item TailSlap.exe TailSlap-standalone.exe
+        Compress-Archive -Path TailSlap-standalone.exe -DestinationPath TailSlap-self-contained.zip
+        move TailSlap-self-contained.zip ${{ github.workspace }}/
+      shell: powershell
+
+    - name: Extract version from tag
+      id: tag_name
+      run: |
+        $version = "${{ github.ref }}".Replace("refs/tags/v", "")
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+      shell: powershell
+
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: TailSlap ${{ steps.tag_name.outputs.version }}
+        body: |
+          ## Release ${{ steps.tag_name.outputs.version }}
+          
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          
+          ### Downloads
+          
+          - **TailSlap-framework-dependent.zip** - Requires .NET 9 Runtime (~156 KB)
+          - **TailSlap-self-contained.zip** - No runtime required (~80 MB)
+          
+          ### Installation
+          
+          1. Download the appropriate zip file
+          2. Extract the contents
+          3. Run TailSlap.exe
+          
+          ### Requirements
+          
+          - Windows 10 or later
+          - .NET 9 Runtime (if using framework-dependent build)
+          
+          See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for setup instructions.
+        draft: false
+        prerelease: false
+
+    - name: Upload Framework-Dependent Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./TailSlap-framework-dependent.zip
+        asset_name: TailSlap-framework-dependent.zip
+        asset_content_type: application/zip
+
+    - name: Upload Self-Contained Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./TailSlap-self-contained.zip
+        asset_name: TailSlap-self-contained.zip
+        asset_content_type: application/zip

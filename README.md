@@ -13,9 +13,15 @@ A Windows utility that enhances your clipboard and text refinement experience wi
 
 ## Installation
 
-1. Download the latest release from the [releases page](https://github.com/yourusername/TailSlap/releases)
-2. Run the installer or extract the portable version
+1. Download the latest release from the [releases page](https://github.com/tailslap/TailSlap/releases)
+2. Extract the portable version or run the self-contained executable
 3. The application will start automatically and appear in your system tray
+
+### Requirements
+
+- **Windows 10 or later**
+- **.NET 9 Runtime** (download from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/9.0)) - not needed if using self-contained build
+- **Internet connection** for LLM processing (local Ollama doesn't require internet)
 
 ## Usage
 
@@ -45,18 +51,23 @@ You can edit this file directly or use the Settings dialog in the system tray me
 Application logs are stored at:
 `%APPDATA%\TailSlap\app.log`
 
-## Requirements
 
-- Windows 10 or later
-- .NET 6.0 or later
-- Internet connection for LLM processing
 
 ## Building from Source
 
-1. Clone the repository
-2. Open the solution in Visual Studio 2022 or later
-3. Restore NuGet packages
-4. Build the solution
+1. Clone the repository: `git clone https://github.com/tailslap/TailSlap.git`
+2. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+3. Build: `dotnet build -c Release`
+4. Publish: `dotnet publish -c Release`
+
+Output: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
+
+For a self-contained single-file build (~80MB):
+```bash
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+```
+
+See [AGENTS.md](AGENTS.md) for detailed architecture and development guidelines.
 
 ## License
 
@@ -64,8 +75,24 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- How to report issues
+- How to submit pull requests
+- Code style and conventions
+- Development setup
 
 ## Support
 
-For support, please [open an issue](https://github.com/yourusername/TailSlap/issues) on GitHub.
+- **Issues**: [GitHub Issues](https://github.com/tailslap/TailSlap/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/tailslap/TailSlap/discussions)
+- **Logs**: Check `%APPDATA%\TailSlap\app.log` for debugging
+
+## Build Status
+
+![Build](https://github.com/tailslap/TailSlap/actions/workflows/build.yml/badge.svg)
+
+All commits and pull requests are automatically built and tested via GitHub Actions.
+
+## Acknowledgments
+
+Built with [.NET 9](https://dotnet.microsoft.com/) and [Windows Forms](https://docs.microsoft.com/windows-forms/)
