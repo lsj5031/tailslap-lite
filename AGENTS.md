@@ -15,25 +15,33 @@ This document contains internal development information for TailSlap contributor
 - **Tray-only UI**: Hidden main form, runs as system tray icon with context menu
 - **Core Services**:
   - `TextRefiner`: OpenAI-compatible LLM HTTP client with retry logic (2 attempts, 1s backoff)
-  - `ClipboardService`: Clipboard operations via Win32 P/Invoke
-  - `ConfigService`: JSON config in `%APPDATA%\TailSlap\` with validation
-  - `Dpapi`: Windows DPAPI encryption for API keys
-  - `AutoStartService`: Registry-based Windows startup
-  - `Logger`: File logging to `%APPDATA%\TailSlap\app.log`
+  - `ClipboardService`: Clipboard operations via Win32 P/Invoke (text capture, paste, fallback to `Ctrl+C`)
+  - `ConfigService`: JSON config in `%APPDATA%\TailSlap\config.json` with validation methods
+  - `Dpapi`: Windows DPAPI encryption for API keys (user-scoped)
+  - `AutoStartService`: Registry-based Windows startup via HKEY_CURRENT_USER\Run
+  - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged)
+  - `HistoryService`: JSONL history file in `%APPDATA%\TailSlap\history.jsonl` (max 50 entries)
+  - `NotificationService`: Balloon tips for user feedback (success/warning/error)
+  - `HotkeyCaptureForm`: Interactive dialog for capturing new hotkey combinations
+  - `SettingsForm`: UI for configuring LLM endpoint, model, temperature, max tokens
+  - `HistoryForm`: UI for viewing and clearing refinement history
 - **Single-instance mutex** prevents multiple app instances
-- **Global hotkey registration** (default Ctrl+Alt+R)
-- **Animated tray icon** (3-frame animation) during LLM processing
+- **Global hotkey registration** (default Ctrl+Alt+R, user-customizable)
+- **Animated tray icon** (4-frame animation with pulsing text) during refinement
+- **DPI-aware icon loading** (scales icons based on display DPI)
 
 ## Code Style & Conventions
 
 - **Language**: C# 12 (.NET 9) with nullable reference types enabled (`<Nullable>enable</Nullable>`)
 - **Implicit usings** enabled (`<ImplicitUsings>enable</ImplicitUsings>`)
 - **Naming**: PascalCase for public members, `_camelCase` for private fields
-- **Classes**: Sealed by default (`sealed class`), internal statics where appropriate
-- **JSON**: System.Text.Json with `PropertyNamingPolicy.CamelCase`
-- **Error handling**: Explicit try-catch blocks with graceful fallbacks; avoid null refs
+- **Classes**: Sealed where appropriate (ConfigService, TextRefiner, ClipboardService, etc.)
+- **JSON**: System.Text.Json with `PropertyNamingPolicy.CamelCase` and pretty-printing for config
+- **Error handling**: Explicit try-catch blocks with graceful fallbacks; show user-friendly notifications
 - **Async**: Prefer `async/await` with `ConfigureAwait(false)` for UI deadlock safety
-- **P/Invoke**: Declared in MainForm and ClipboardService with `DllImport` attributes
-- **Validation**: Static helper methods in ConfigService (IsValidUrl, IsValidTemperature, etc.)
-- **Logging**: Wrap all logging in try-catch to prevent crashes if log write fails
-- **No external NuGet dependencies**: Only built-in .NET libraries
+- **P/Invoke**: Declared in MainForm (hotkey registration) and ClipboardService (clipboard access) with `DllImport` attributes
+- **Validation**: Static helper methods in ConfigService (IsValidUrl, IsValidTemperature, IsValidMaxTokens, IsValidModelName)
+- **Logging**: Wrap all logging in try-catch to prevent crashes if log write fails; log fingerprints (SHA256) of text, not the text itself
+- **Notifications**: Use NotificationService for all user-facing messages (balloon tips)
+- **UI Forms**: Always use `using` statements for form disposal; dialog-based for modality
+- **No external NuGet dependencies**: Only built-in .NET libraries (System.*, Microsoft.*)

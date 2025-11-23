@@ -32,12 +32,14 @@ A Windows utility that enhances your clipboard and text refinement experience wi
 ### System Tray Menu
 
 Right-click the TailSlap icon in the system tray to access:
-- **Refine Now**: Process the currently selected text
-- **Auto Paste**: Toggle automatic pasting of refined text
-- **Change Hotkey**: Set a custom keyboard shortcut
-- **Settings**: Configure application preferences
-- **History**: View and manage your refinement history
+- **Refine Now**: Process the currently selected text immediately
+- **Auto Paste**: Toggle automatic pasting of refined text to your clipboard
+- **Change Hotkey**: Set a custom keyboard shortcut (interactive capture)
+- **Settings...**: Configure LLM endpoint, model, temperature, and other preferences
+- **Open Logs...**: View application logs for debugging
+- **History...**: View and clear your refinement history
 - **Start with Windows**: Toggle automatic startup with Windows
+- **Quit**: Exit the application
 
 ## Configuration
 
