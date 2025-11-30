@@ -12,6 +12,10 @@ public sealed class ClipboardService
     private static readonly System.Collections.Generic.Dictionary<string, int> _captureStats = new();
     private static readonly System.Collections.Generic.Dictionary<string, IntPtr> _windowHandleCache = new();
     private static DateTime _lastCacheClear = DateTime.Now;
+    
+    // Events for UI feedback
+    public event Action? CaptureStarted;
+    public event Action? CaptureEnded;
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
@@ -159,6 +163,34 @@ public sealed class ClipboardService
         catch { return false; }
     }
 
+    // "Canary Probe" to check if UIA is responsive for a window
+    private static bool IsUiaResponsive(IntPtr hWnd)
+    {
+        // Use a very short timeout for the probe
+        using var cts = new CancellationTokenSource(50);
+        try
+        {
+            var task = RunInMtaForUIA(() =>
+            {
+                try
+                {
+                    var el = AutomationElement.FromHandle(hWnd);
+                    // Just accessing a lightweight property to see if the provider responds
+                    var id = el.Current.AutomationId; 
+                    return true;
+                }
+                catch { return false; }
+            }, cts);
+            
+            task.Wait(cts.Token);
+            return task.Result;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static void LogClipboardState(string prefix)
     {
         try
@@ -193,7 +225,13 @@ public sealed class ClipboardService
         ClearCacheIfNeeded();
         
         try { Logger.Log($"=== CAPTURE START === ThreadId={Thread.CurrentThread.ManagedThreadId}, Apt={Thread.CurrentThread.GetApartmentState()}, Fallback={useClipboardFallback}"); } catch { }
-        LogClipboardState("Before");
+        
+        // Notify UI to start animation
+        CaptureStarted?.Invoke();
+        
+        try
+        {
+            LogClipboardState("Before");
         string? originalClipboard = null;
         try 
         { 
@@ -272,12 +310,16 @@ public sealed class ClipboardService
         bool isFirefox = windowClass.Equals("MozillaWindowClass", StringComparison.Ordinal);
         bool isSublime = IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS");
         bool isNotepad = windowClass.Equals("Notepad", StringComparison.Ordinal);
-        bool skipUIA = isFirefox || isNotepad;
+        
+        // Dynamic Canary Probe: Check if UIA is responsive instead of blacklisting Chrome
+        bool isUiaResponsive = !isFirefox && !isNotepad && IsUiaResponsive(foregroundWindow);
+        
+        bool skipUIA = isFirefox || isNotepad || !isUiaResponsive;
         try
         {
             Logger.Log(
-                $"Step 3c: Special-case window detection: isFirefox={isFirefox}, isSublime={isSublime}, isNotepad={isNotepad}, " +
-                $"useClipboardFallback={useClipboardFallback}, originalClipboardLen={(originalClipboard?.Length ?? 0)}");
+                $"Step 3c: Window analysis: isFirefox={isFirefox}, isSublime={isSublime}, isNotepad={isNotepad}, " +
+                $"isUiaResponsive={isUiaResponsive}, skipUIA={skipUIA}, useClipboardFallback={useClipboardFallback}");
         }
         catch { }
         if (!skipUIA)
@@ -285,7 +327,11 @@ public sealed class ClipboardService
             try
             {
                 try { Logger.Log($"Step 4: Attempting UI Automation for {windowClass}..."); } catch { }
-                var uia = TryGetSelectionViaUIA();
+                
+                // Create cancellation token for this UIA attempt
+                using var cts = new CancellationTokenSource();
+                
+                var uia = TryGetSelectionViaUIA(cts);
                 if (!string.IsNullOrWhiteSpace(uia))
                 {
                     RecordCaptureSuccess("UIA", true);
@@ -300,7 +346,9 @@ public sealed class ClipboardService
                 }
                 // UIA hit-test near caret as a secondary attempt
                 try { Logger.Log("Step 4b: Attempting UIA FromPoint..."); } catch { }
-                var uiaPt = TryGetSelectionViaUIAFromCaret();
+                
+                using var ctsPt = new CancellationTokenSource();
+                var uiaPt = TryGetSelectionViaUIAFromCaret(ctsPt);
                 if (!string.IsNullOrWhiteSpace(uiaPt))
                 {
                     RecordCaptureSuccess("UIA_FromPoint", true);
@@ -328,13 +376,18 @@ public sealed class ClipboardService
         {
             try { Logger.Log("Step 4: Skipping UI Automation for Notepad window to avoid potential UIA instability - will attempt copy methods"); } catch { }
         }
+        else if (!isUiaResponsive)
+        {
+            try { Logger.Log("Step 4: Skipping UI Automation because window failed Canary Probe (unresponsive) - will attempt copy methods"); } catch { }
+        }
 
         // 1b) UIA deep search (caret point and subtree scan) - skip for blacklisted windows
         if (!skipUIA)
         {
             try
             {
-                var uiaDeep = TryGetSelectionViaUIADeep(foregroundWindow);
+                using var ctsDeep = new CancellationTokenSource();
+                var uiaDeep = TryGetSelectionViaUIADeep(foregroundWindow, ctsDeep);
                 if (!string.IsNullOrWhiteSpace(uiaDeep))
                 {
                     try { Logger.Log($"UIA(deep) selection captured: len={uiaDeep.Length}"); } catch { }
@@ -351,6 +404,10 @@ public sealed class ClipboardService
         else if (isNotepad)
         {
             try { Logger.Log("Step 4b: Skipping UIA deep search for Notepad to avoid potential UIA instability"); } catch { }
+        }
+        else if (!isUiaResponsive)
+        {
+            try { Logger.Log("Step 4b: Skipping UIA deep search because window failed Canary Probe"); } catch { }
         }
 
         // 2) Win32 direct read (standard edit controls)
@@ -501,6 +558,12 @@ public sealed class ClipboardService
             try { Logger.Log("=== CAPTURE FAILED ==="); } catch { }
         }
         return string.Empty;
+        }
+        finally
+        {
+            // Ensure UI animation stops
+            CaptureEnded?.Invoke();
+        }
     }
 
     public bool SetText(string text)
@@ -621,7 +684,7 @@ public sealed class ClipboardService
         catch { return false; }
     }
 
-    private static string? TryGetSelectionViaUIA()
+    private static string? TryGetSelectionViaUIA(CancellationTokenSource? cts = null)
     {
         // Use MTA thread for UI Automation as per Microsoft recommendations.
         // AutomationElement instances do not implement IDisposable and require no explicit Dispose/using.
@@ -703,7 +766,7 @@ public sealed class ClipboardService
         }
     }
 
-    private static string? TryGetSelectionViaUIAFromCaret()
+    private static string? TryGetSelectionViaUIAFromCaret(CancellationTokenSource? cts = null)
     {
         // Use MTA thread for UI Automation as per Microsoft recommendations
         var uiaTask = RunInMtaForUIA(() =>
@@ -791,7 +854,7 @@ public sealed class ClipboardService
         catch { return null; }
     }
 
-    private static string? TryGetSelectionViaUIADeep(IntPtr hwndForeground)
+    private static string? TryGetSelectionViaUIADeep(IntPtr hwndForeground, CancellationTokenSource? cts = null)
     {
         // Use MTA thread for UI Automation as per Microsoft recommendations
         var uiaTask = RunInMtaForUIA(() =>
@@ -1212,25 +1275,55 @@ public sealed class ClipboardService
     }
 
     // New method for UI Automation operations using MTA thread (recommended by Microsoft)
-    private static System.Threading.Tasks.Task<T> RunInMtaForUIA<T>(Func<T> func)
+    // Enhanced with thread tracking and abort for timed-out operations
+    private static System.Threading.Tasks.Task<T> RunInMtaForUIA<T>(Func<T> func, CancellationTokenSource? cts = null)
     {
         var tcs = new System.Threading.Tasks.TaskCompletionSource<T>();
-        var th = new Thread(() =>
+        Thread? th = null;
+        th = new Thread(() =>
         {
             try 
             { 
                 var r = func(); 
                 tcs.SetResult(r); 
             }
+            catch (ThreadAbortException)
+            {
+                // Thread was aborted due to timeout - this is expected
+                try { Logger.Log("UIA MTA thread aborted due to timeout"); } catch { }
+                tcs.TrySetCanceled();
+            }
             catch (Exception ex) 
             { 
                 try { Logger.Log($"UIA MTA thread exception: {ex.GetType().Name}: {ex.Message}"); } catch { }
-                tcs.SetException(ex); 
+                tcs.TrySetException(ex); 
             }
         });
         th.IsBackground = true;
         th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
         th.Start();
+        
+        // Monitor thread and abort if it hangs
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            // Wait a bit longer than the expected timeout to give the operation a chance to complete naturally
+            await System.Threading.Tasks.Task.Delay(1500);
+            if (!tcs.Task.IsCompleted && th != null && th.IsAlive)
+            {
+                try 
+                { 
+                    Logger.Log("UIA MTA thread still running after timeout - attempting abort");
+#pragma warning disable SYSLIB0006 // Thread.Abort is obsolete but necessary for cleanup
+                    th.Abort();
+#pragma warning restore SYSLIB0006
+                } 
+                catch (Exception ex)
+                {
+                    try { Logger.Log($"Failed to abort UIA thread: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                }
+            }
+        });
+        
         return tcs.Task;
     }
 }

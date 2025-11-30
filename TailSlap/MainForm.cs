@@ -65,6 +65,11 @@ public class MainForm : Form
             if (_frame % 4 == 0) _tray.Text = "TailSlap - Processing...";
             else _tray.Text = "TailSlap";
         };
+        
+        // Subscribe to clipboard events for visual feedback
+        _clip.CaptureStarted += () => { try { Invoke((MethodInvoker)StartAnim); } catch { } };
+        _clip.CaptureEnded += () => { try { Invoke((MethodInvoker)StopAnim); } catch { } };
+        
         _currentMods = _currentConfig.Hotkey.Modifiers;
         _currentVk = _currentConfig.Hotkey.Key;
         Logger.Log($"MainForm initialized. Planned hotkey mods={_currentMods}, key={_currentVk}");
