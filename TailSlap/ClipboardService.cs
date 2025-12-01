@@ -310,16 +310,18 @@ public sealed class ClipboardService
         bool isFirefox = windowClass.Equals("MozillaWindowClass", StringComparison.Ordinal);
         bool isSublime = IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS");
         bool isNotepad = windowClass.Equals("Notepad", StringComparison.Ordinal);
+        bool isChrome = windowClass.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal); // Chrome, Edge, etc.
         
-        // Dynamic Canary Probe: Check if UIA is responsive instead of blacklisting Chrome
-        bool isUiaResponsive = !isFirefox && !isNotepad && IsUiaResponsive(foregroundWindow);
+        // Dynamic Canary Probe: Check if UIA is responsive for others
+        // Note: We explicitly skip Chrome because it passes the probe but hangs on deep calls
+        bool isUiaResponsive = !isFirefox && !isNotepad && !isChrome && IsUiaResponsive(foregroundWindow);
         
-        bool skipUIA = isFirefox || isNotepad || !isUiaResponsive;
+        bool skipUIA = isFirefox || isNotepad || isChrome || !isUiaResponsive;
         try
         {
             Logger.Log(
                 $"Step 3c: Window analysis: isFirefox={isFirefox}, isSublime={isSublime}, isNotepad={isNotepad}, " +
-                $"isUiaResponsive={isUiaResponsive}, skipUIA={skipUIA}, useClipboardFallback={useClipboardFallback}");
+                $"isChrome={isChrome}, isUiaResponsive={isUiaResponsive}, skipUIA={skipUIA}, useClipboardFallback={useClipboardFallback}");
         }
         catch { }
         if (!skipUIA)
@@ -376,6 +378,10 @@ public sealed class ClipboardService
         {
             try { Logger.Log("Step 4: Skipping UI Automation for Notepad window to avoid potential UIA instability - will attempt copy methods"); } catch { }
         }
+        else if (isChrome)
+        {
+            try { Logger.Log("Step 4: Skipping UI Automation for Chrome/Edge (Chrome_WidgetWin_*) to prevent UIA crashes - will attempt copy methods"); } catch { }
+        }
         else if (!isUiaResponsive)
         {
             try { Logger.Log("Step 4: Skipping UI Automation because window failed Canary Probe (unresponsive) - will attempt copy methods"); } catch { }
@@ -404,6 +410,10 @@ public sealed class ClipboardService
         else if (isNotepad)
         {
             try { Logger.Log("Step 4b: Skipping UIA deep search for Notepad to avoid potential UIA instability"); } catch { }
+        }
+        else if (isChrome)
+        {
+            try { Logger.Log("Step 4b: Skipping UIA deep search for Chrome/Edge to prevent UIA crashes"); } catch { }
         }
         else if (!isUiaResponsive)
         {
@@ -1303,26 +1313,9 @@ public sealed class ClipboardService
         th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
         th.Start();
         
-        // Monitor thread and abort if it hangs
-        _ = System.Threading.Tasks.Task.Run(async () =>
-        {
-            // Wait a bit longer than the expected timeout to give the operation a chance to complete naturally
-            await System.Threading.Tasks.Task.Delay(1500);
-            if (!tcs.Task.IsCompleted && th != null && th.IsAlive)
-            {
-                try 
-                { 
-                    Logger.Log("UIA MTA thread still running after timeout - attempting abort");
-#pragma warning disable SYSLIB0006 // Thread.Abort is obsolete but necessary for cleanup
-                    th.Abort();
-#pragma warning restore SYSLIB0006
-                } 
-                catch (Exception ex)
-                {
-                    try { Logger.Log($"Failed to abort UIA thread: {ex.GetType().Name}: {ex.Message}"); } catch { }
-                }
-            }
-        });
+        // Monitor thread but don't try to abort (PlatformNotSupported in .NET Core/5+)
+        // We just rely on the Task.Wait timeout in the caller to unblock the main thread
+        // The background thread may remain as a zombie if it hangs, but won't crash the app
         
         return tcs.Task;
     }
