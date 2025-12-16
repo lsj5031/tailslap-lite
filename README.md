@@ -19,14 +19,13 @@
 
 ## Installation
 
-1. Download the latest release from the [releases page](https://github.com/tailslap/TailSlap/releases)
-2. Extract the portable version or run the self-contained executable
+1. Download TailSlap.exe from the [releases page](https://github.com/tailslap/TailSlap/releases)
+2. Run the executable directly (no installation needed)
 3. The application will start automatically and appear in your system tray
 
 ### Requirements
 
 - **Windows 10 or later**
-- **.NET 9 Runtime** (download from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/9.0)) - not needed if using self-contained build
 - **Internet connection** for LLM processing (local Ollama doesn't require internet)
 
 ## Usage
@@ -73,15 +72,9 @@ The animation plays with pulsing text ("TailSlap - Processing...") during LLM re
 
 1. Clone the repository: `git clone https://github.com/tailslap/TailSlap.git`
 2. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-3. Build: `dotnet build -c Release`
-4. Publish: `dotnet publish -c Release`
+3. Publish: `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
 
-Output: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
-
-For a self-contained single-file build (~80MB):
-```bash
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-```
+Output: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe` (~80MB, no runtime required)
 
 See [AGENTS.md](AGENTS.md) for detailed architecture and development guidelines.
 

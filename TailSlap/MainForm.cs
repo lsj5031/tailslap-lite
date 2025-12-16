@@ -60,15 +60,23 @@ public class MainForm : Form
         
         _animTimer = new System.Windows.Forms.Timer { Interval = 100 }; // Faster animation for better visibility
         _animTimer.Tick += (_, __) => { 
-            _tray.Icon = _frames[_frame++ % _frames.Length]; 
-            // Add subtle pulsing effect during animation
-            if (_frame % 4 == 0) _tray.Text = "TailSlap - Processing...";
-            else _tray.Text = "TailSlap";
+            try 
+            {
+                int currentFrame = _frame % _frames.Length;
+                _tray.Icon = _frames[currentFrame]; 
+                _frame++;
+                // Add subtle pulsing effect during animation
+                if (_frame % 4 == 0) _tray.Text = "TailSlap - Processing...";
+                else _tray.Text = "TailSlap";
+            }
+            catch (Exception ex) 
+            {
+                try { Logger.Log($"Animation tick error: {ex.Message}"); } catch { }
+            }
         };
         
-        // Subscribe to clipboard events for visual feedback
-        _clip.CaptureStarted += () => { try { Invoke((MethodInvoker)StartAnim); } catch { } };
-        _clip.CaptureEnded += () => { try { Invoke((MethodInvoker)StopAnim); } catch { } };
+        // Animation is managed by RefineSelectionAsync (StartAnim on start, StopAnim in finally)
+        // so we don't need to subscribe to CaptureStarted/CaptureEnded events
         
         _currentMods = _currentConfig.Hotkey.Modifiers;
         _currentVk = _currentConfig.Hotkey.Key;
@@ -111,6 +119,13 @@ public class MainForm : Form
                         } 
                     }
                 }
+                
+                // Try loading from embedded resources if file not found
+                if (list.Count < i)
+                {
+                    var icon = LoadIconFromResources($"TailSlap.Icons.Chewing{i}.ico");
+                    if (icon != null) list.Add(icon);
+                }
             }
             
             if (list.Count > 0) 
@@ -122,6 +137,23 @@ public class MainForm : Form
         catch { }
         // Fallback to idle icon to ensure at least one frame exists
         return new[] { _idleIcon };
+    }
+    
+    private static Icon? LoadIconFromResources(string resourceName)
+    {
+        try
+        {
+            var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            using (var stream = assembly.GetManifestResourceStream(resourceName))
+            {
+                if (stream != null)
+                {
+                    return new Icon(stream);
+                }
+            }
+        }
+        catch { }
+        return null;
     }
 
     private Icon LoadIdleIcon()
@@ -154,6 +186,14 @@ public class MainForm : Form
                     } 
                 }
             }
+            
+            // Try loading from embedded resources
+            var resourceIcon = LoadIconFromResources("TailSlap.Icons.Chewing1.ico");
+            if (resourceIcon != null)
+            {
+                Logger.Log("Loaded idle icon from embedded resources");
+                return resourceIcon;
+            }
         }
         catch { }
         return SystemIcons.Application;
@@ -178,7 +218,15 @@ public class MainForm : Form
                 catch 
                 { 
                     try { return new Icon(mainIconPath); } catch { } 
-                }
+                } 
+            }
+            
+            // Try loading from embedded resources
+            var resourceIcon = LoadIconFromResources("TailSlap.Icons.TailSlap.ico");
+            if (resourceIcon != null)
+            {
+                Logger.Log("Loaded main icon from embedded resources");
+                return resourceIcon;
             }
         }
         catch { }
@@ -254,6 +302,7 @@ public class MainForm : Form
     {
         try
         {
+            Logger.Log("RefineSelectionAsync started");
             StartAnim();
             Logger.Log("Starting capture from selection/clipboard");
             var text = await _clip.CaptureSelectionOrClipboardAsync(_currentConfig.UseClipboardFallback);
@@ -317,8 +366,8 @@ public class MainForm : Form
         catch { return ""; }
     }
 
-    private void StartAnim() => _animTimer.Start();
-    private void StopAnim() { _animTimer.Stop(); _tray.Icon = _idleIcon; }
+    private void StartAnim() { try { Logger.Log("Animation START"); } catch { } _frame = 0; _animTimer.Start(); }
+    private void StopAnim() { try { Logger.Log("Animation STOP"); } catch { } _animTimer.Stop(); _frame = 0; _tray.Icon = _idleIcon; _tray.Text = "TailSlap"; }
     // Legacy Notify method kept for compatibility but should use NotificationService instead
     private void Notify(string msg, bool error = false) 
     { 
