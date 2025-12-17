@@ -99,7 +99,9 @@ public sealed class AudioRecorder : IDisposable
     public async Task<RecordingStats> RecordAsync(string outputPath, int maxDurationMs = 0, CancellationToken ct = default, bool enableVAD = false, int silenceThresholdMs = 1000)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(AudioRecorder));
+        Logger.Log($"AudioRecorder.RecordAsync: outputPath={outputPath}, maxDurationMs={maxDurationMs}, enableVAD={enableVAD}");
         int numDevices = waveInGetNumDevs();
+        Logger.Log($"AudioRecorder: Found {numDevices} audio input devices");
         if (numDevices == 0)
             throw new InvalidOperationException("No audio input device found.");
 
@@ -122,9 +124,14 @@ public sealed class AudioRecorder : IDisposable
 
             // Open recording device (use preferred device if specified)
             int deviceId = _preferredDeviceIndex >= 0 ? _preferredDeviceIndex : WAVE_MAPPER;
+            Logger.Log($"AudioRecorder: Opening device {deviceId}");
             int result = waveInOpen(out _hWaveIn, deviceId, ref wfx, IntPtr.Zero, IntPtr.Zero, CALLBACK_NULL);
             if (result != 0)
+            {
+                Logger.Log($"AudioRecorder: waveInOpen FAILED with error {result}");
                 throw new InvalidOperationException($"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}");
+            }
+            Logger.Log($"AudioRecorder: waveInOpen succeeded, handle=0x{_hWaveIn:X}");
 
             // Allocate and prepare buffers
             for (int i = 0; i < BUFFER_COUNT; i++)
@@ -155,9 +162,14 @@ public sealed class AudioRecorder : IDisposable
             _recordedData.SetLength(0);
 
             // Start recording
+            Logger.Log("AudioRecorder: Starting recording");
             result = waveInStart(_hWaveIn);
             if (result != 0)
+            {
+                Logger.Log($"AudioRecorder: waveInStart FAILED with error {result}");
                 throw new InvalidOperationException($"Failed to start recording: error {result}");
+            }
+            Logger.Log("AudioRecorder: Recording started successfully");
 
             // Track silence for VAD
             int consecutiveSilentBuffers = 0;
@@ -186,15 +198,18 @@ public sealed class AudioRecorder : IDisposable
             }
             catch (OperationCanceledException)
             {
+                Logger.Log("AudioRecorder: Recording cancelled by user");
                 stopwatch.Stop();
             }
 
             // Set duration from stopwatch
             stats.DurationMs = (int)stopwatch.ElapsedMilliseconds;
+            Logger.Log($"AudioRecorder: Recording loop ended, duration={stats.DurationMs}ms");
 
             // Stop recording
             if (_hWaveIn != IntPtr.Zero)
             {
+                Logger.Log("AudioRecorder: Calling waveInStop");
                 waveInStop(_hWaveIn);
             }
             
@@ -215,12 +230,14 @@ public sealed class AudioRecorder : IDisposable
             
             return stats;
         }
-        catch
+        catch (Exception ex)
         {
+            Logger.Log($"AudioRecorder: EXCEPTION during recording: {ex.GetType().Name}: {ex.Message}");
             throw;
         }
         finally
         {
+            Logger.Log("AudioRecorder: Entering finally block, calling Stop()");
             Stop();
         }
     }
@@ -267,12 +284,21 @@ public sealed class AudioRecorder : IDisposable
                         }
 
                         // Re-add buffer for more recording if not final drain
-                        if (!isFinalDrain && _isRecording)
+                        if (!isFinalDrain && _isRecording && _hWaveIn != IntPtr.Zero)
                         {
                             _waveHeaders[i].dwBytesRecorded = 0;
                             _waveHeaders[i].dwFlags = 0; // Reset flags
-                            waveInPrepareHeader(_hWaveIn, ref _waveHeaders[i], Marshal.SizeOf(typeof(WAVEHDR)));
-                            waveInAddBuffer(_hWaveIn, ref _waveHeaders[i], Marshal.SizeOf(typeof(WAVEHDR)));
+                            int prepResult = waveInPrepareHeader(_hWaveIn, ref _waveHeaders[i], Marshal.SizeOf(typeof(WAVEHDR)));
+                            if (prepResult != 0)
+                            {
+                                Logger.Log($"AudioRecorder: waveInPrepareHeader FAILED for buffer {i}, error={prepResult}");
+                                continue;
+                            }
+                            int addResult = waveInAddBuffer(_hWaveIn, ref _waveHeaders[i], Marshal.SizeOf(typeof(WAVEHDR)));
+                            if (addResult != 0)
+                            {
+                                Logger.Log($"AudioRecorder: waveInAddBuffer FAILED for buffer {i}, error={addResult}");
+                            }
                         }
                     }
                 }
@@ -311,11 +337,15 @@ public sealed class AudioRecorder : IDisposable
 
     private void Stop()
     {
+        Logger.Log("AudioRecorder.Stop: Starting cleanup");
         _isRecording = false;
         
         if (_hWaveIn != IntPtr.Zero)
         {
-            waveInReset(_hWaveIn); // Stop and reset position
+            Logger.Log("AudioRecorder.Stop: Calling waveInReset");
+            int resetResult = waveInReset(_hWaveIn); // Stop and reset position
+            if (resetResult != 0)
+                Logger.Log($"AudioRecorder.Stop: waveInReset returned error {resetResult}");
             
             // Unprepare headers BEFORE closing the device (requires valid handle)
             for (int i = 0; i < BUFFER_COUNT; i++)
@@ -324,12 +354,21 @@ public sealed class AudioRecorder : IDisposable
                 {
                     try 
                     {
-                       waveInUnprepareHeader(_hWaveIn, ref _waveHeaders[i], Marshal.SizeOf(typeof(WAVEHDR)));
-                    } catch {}
+                        int unprepResult = waveInUnprepareHeader(_hWaveIn, ref _waveHeaders[i], Marshal.SizeOf(typeof(WAVEHDR)));
+                        if (unprepResult != 0)
+                            Logger.Log($"AudioRecorder.Stop: waveInUnprepareHeader[{i}] returned error {unprepResult}");
+                    } 
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"AudioRecorder.Stop: Exception unpreparing header {i}: {ex.Message}");
+                    }
                 }
             }
             
-            waveInClose(_hWaveIn);
+            Logger.Log("AudioRecorder.Stop: Calling waveInClose");
+            int closeResult = waveInClose(_hWaveIn);
+            if (closeResult != 0)
+                Logger.Log($"AudioRecorder.Stop: waveInClose returned error {closeResult}");
             _hWaveIn = IntPtr.Zero;
         }
 
@@ -338,9 +377,17 @@ public sealed class AudioRecorder : IDisposable
         {
             if (_bufferHandles[i].IsAllocated)
             {
-                _bufferHandles[i].Free();
+                try
+                {
+                    _bufferHandles[i].Free();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"AudioRecorder.Stop: Exception freeing buffer handle {i}: {ex.Message}");
+                }
             }
         }
+        Logger.Log("AudioRecorder.Stop: Cleanup complete");
     }
     
     [DllImport("winmm.dll")] private static extern int waveInReset(IntPtr hwi);

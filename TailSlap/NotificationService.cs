@@ -36,12 +36,14 @@ public static class NotificationService
 
     public static void ShowInfo(string message, string title = "TailSlap")
     {
-        EnqueueNotification(title, message, NotificationType.Info, 3000);
+        // Only log, no balloon tip for info messages
+        try { Logger.Log($"[Info]: {message}"); } catch { }
     }
 
     public static void ShowSuccess(string message, string title = "TailSlap")
     {
-        EnqueueNotification(title, message, NotificationType.Success, 2000);
+        // Only log, no balloon tip for success messages
+        try { Logger.Log($"[Success]: {message}"); } catch { }
     }
 
     public static void ShowWarning(string message, string title = "TailSlap")
