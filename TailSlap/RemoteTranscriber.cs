@@ -41,10 +41,11 @@ public class TranscriberException : Exception
     }
 }
 
-public sealed class RemoteTranscriber
+public sealed class RemoteTranscriber : IDisposable
 {
     private readonly TranscriberConfig _config;
     private readonly HttpClient _httpClient;
+    private bool _disposed;
 
     public RemoteTranscriber(TranscriberConfig config)
     {
@@ -55,16 +56,17 @@ public sealed class RemoteTranscriber
         };
     }
 
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _httpClient?.Dispose();
+        _disposed = true;
+    }
+
     public async Task<string> TestConnectionAsync()
     {
         try
         {
-            var headers = new MultipartFormDataContent();
-            if (!string.IsNullOrEmpty(_config.ApiKey))
-            {
-                headers.Add(new StringContent(_config.ApiKey), "Authorization", $"Bearer {_config.ApiKey}");
-            }
-
             // Create a short silence WAV file for testing
             var silenceWav = CreateSilenceWavBytes(durationSeconds: 0.6f);
             var audioContent = new ByteArrayContent(silenceWav);
@@ -78,7 +80,14 @@ public sealed class RemoteTranscriber
                 formData.Add(new StringContent(_config.Model), "model");
             }
 
-            var response = await _httpClient.PostAsync(_config.BaseUrl, formData);
+            // Create request and add Authorization header (must be on HttpRequestMessage, not content)
+            var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl) { Content = formData };
+            if (!string.IsNullOrEmpty(_config.ApiKey))
+            {
+                request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
+            }
+
+            var response = await _httpClient.SendAsync(request);
             
             var responseText = await response.Content.ReadAsStringAsync();
             
@@ -124,9 +133,10 @@ public sealed class RemoteTranscriber
         }
         catch (Exception e)
         {
+            Logger.Log($"TestConnectionAsync unexpected error: {e.GetType().Name}: {e.Message}");
             throw new TranscriberException(
                 TranscriberErrorType.Unknown,
-                "Unexpected error during remote connection test",
+                $"Unexpected error during remote connection test: {e.Message}",
                 e);
         }
     }
@@ -138,87 +148,164 @@ public sealed class RemoteTranscriber
             throw new FileNotFoundException($"Audio file not found: {audioFilePath}");
         }
 
-        try
+        var fileInfo = new System.IO.FileInfo(audioFilePath);
+        Logger.Log($"TranscribeAudioAsync: file={audioFilePath}, size={fileInfo.Length} bytes");
+
+        // Retry logic: 2 attempts, 1s backoff (matches TextRefiner pattern)
+        int attempts = 2;
+        int attemptNumber = 0;
+        while (attempts-- > 0)
         {
-            var audioBytes = await File.ReadAllBytesAsync(audioFilePath);
-            var audioContent = new ByteArrayContent(audioBytes);
-            audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav");
-
-            var formData = new MultipartFormDataContent();
-            formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
-            
-            if (!string.IsNullOrEmpty(_config.Model))
-            {
-                formData.Add(new StringContent(_config.Model), "model");
-            }
-
-            if (!string.IsNullOrEmpty(_config.ApiKey))
-            {
-                formData.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
-            }
-
-            var response = await _httpClient.PostAsync(_config.BaseUrl, formData);
-            
-            var responseText = await response.Content.ReadAsStringAsync();
-            
-            if (response.StatusCode != System.Net.HttpStatusCode.OK)
-            {
-                throw new TranscriberException(
-                    TranscriberErrorType.HttpError,
-                    $"Remote API returned error (HTTP {(int)response.StatusCode})",
-                    statusCode: (int)response.StatusCode,
-                    responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
-            }
-
+            attemptNumber++;
+            Logger.Log($"Transcription attempt {attemptNumber}/2");
             try
             {
-                var payload = JsonDocument.Parse(responseText);
-                return ExtractTextFromResponse(payload.RootElement);
+                var audioBytes = await File.ReadAllBytesAsync(audioFilePath);
+                Logger.Log($"Read {audioBytes.Length} bytes from audio file");
+                var audioContent = new ByteArrayContent(audioBytes);
+                audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav");
+
+                var formData = new MultipartFormDataContent();
+                formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
+                
+                if (!string.IsNullOrEmpty(_config.Model))
+                {
+                    formData.Add(new StringContent(_config.Model), "model");
+                    Logger.Log($"Added model to request: {_config.Model}");
+                }
+
+                Logger.Log($"Posting to {_config.BaseUrl}");
+                
+                // Create request and add Authorization header (must be on HttpRequestMessage, not content)
+                var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl) { Content = formData };
+                if (!string.IsNullOrEmpty(_config.ApiKey))
+                {
+                    request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
+                    Logger.Log("Added Authorization header");
+                }
+                
+                var response = await _httpClient.SendAsync(request);
+                
+                Logger.Log($"Received response: HTTP {(int)response.StatusCode} {response.StatusCode}");
+                var responseText = await response.Content.ReadAsStringAsync();
+                Logger.Log($"Response body length: {responseText.Length}, content: {responseText.Substring(0, Math.Min(500, responseText.Length))}");
+                
+                if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                {
+                    Logger.Log($"Error response: {responseText}");
+                    throw new TranscriberException(
+                        TranscriberErrorType.HttpError,
+                        $"Remote API returned error (HTTP {(int)response.StatusCode})",
+                        statusCode: (int)response.StatusCode,
+                        responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                }
+
+                try
+                {
+                    Logger.Log("Parsing JSON response");
+                    var payload = JsonDocument.Parse(responseText);
+                    Logger.Log("JSON parsed successfully");
+                    var text = ExtractTextFromResponse(payload.RootElement);
+                    Logger.Log($"Extracted text from response: {text.Substring(0, Math.Min(100, text.Length))}");
+                    return text;
+                }
+                catch (JsonException e)
+                {
+                    Logger.Log($"JSON parsing failed: {e.Message}");
+                    throw new TranscriberException(
+                        TranscriberErrorType.ParseError,
+                        "Remote API returned invalid JSON",
+                        e,
+                        responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                }
             }
-            catch (JsonException e)
+            catch (TranscriberException ex)
             {
+                if (ex.IsRetryable() && attempts > 0)
+                {
+                    try { Logger.Log($"Transcription failed with retryable error: {ex.Message}; retrying in 1s"); } catch { }
+                    await Task.Delay(1000);
+                    continue;
+                }
+                throw;
+            }
+            catch (TaskCanceledException e)
+            {
+                var ex = new TranscriberException(
+                    TranscriberErrorType.NetworkTimeout,
+                    $"Remote API request timed out after {_config.TimeoutSeconds}s",
+                    e);
+                if (attempts > 0)
+                {
+                    try { Logger.Log($"Transcription timeout; retrying in 1s"); } catch { }
+                    await Task.Delay(1000);
+                    continue;
+                }
+                throw ex;
+            }
+            catch (HttpRequestException e)
+            {
+                var ex = new TranscriberException(
+                    TranscriberErrorType.ConnectionFailed,
+                    "Failed to connect to remote API",
+                    e);
+                if (attempts > 0)
+                {
+                    try { Logger.Log($"Transcription connection failed; retrying in 1s"); } catch { }
+                    await Task.Delay(1000);
+                    continue;
+                }
+                throw ex;
+            }
+            catch (Exception e)
+            {
+                Logger.Log($"TranscribeAudioAsync unexpected error: {e.GetType().Name}: {e.Message}");
                 throw new TranscriberException(
-                    TranscriberErrorType.ParseError,
-                    "Remote API returned invalid JSON",
-                    e,
-                    responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                    TranscriberErrorType.Unknown,
+                    $"Unexpected error during remote transcription: {e.Message}",
+                    e);
             }
         }
-        catch (TranscriberException)
-        {
-            throw;
-        }
-        catch (TaskCanceledException e)
-        {
-            throw new TranscriberException(
-                TranscriberErrorType.NetworkTimeout,
-                $"Remote API request timed out after {_config.TimeoutSeconds}s",
-                e);
-        }
-        catch (HttpRequestException e)
-        {
-            throw new TranscriberException(
-                TranscriberErrorType.ConnectionFailed,
-                "Failed to connect to remote API",
-                e);
-        }
-        catch (Exception e)
-        {
-            throw new TranscriberException(
-                TranscriberErrorType.Unknown,
-                "Unexpected error during remote transcription",
-                e);
-        }
+        
+        throw new TranscriberException(
+            TranscriberErrorType.Unknown,
+            "Transcription failed after multiple retries");
     }
 
     private static string ExtractTextFromResponse(JsonElement response)
     {
         // Try common top-level keys
-        foreach (var key in new[] { "text", "transcription", "result" })
+        foreach (var key in new[] { "text", "transcription", "result", "content" })
         {
             if (response.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
             {
                 return textElement.GetString() ?? "";
+            }
+        }
+
+        // Try choices array (OpenAI format)
+        if (response.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array)
+        {
+            var choicesArray = choices.EnumerateArray();
+            if (choicesArray.MoveNext() && choicesArray.Current.ValueKind == JsonValueKind.Object)
+            {
+                var firstChoice = choicesArray.Current;
+                // Try text directly in choice
+                foreach (var key in new[] { "text", "transcription", "content" })
+                {
+                    if (firstChoice.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
+                    {
+                        return textElement.GetString() ?? "";
+                    }
+                }
+                // Try message.content (OpenAI format)
+                if (firstChoice.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object)
+                {
+                    if (msg.TryGetProperty("content", out var msgContent) && msgContent.ValueKind == JsonValueKind.String)
+                    {
+                        return msgContent.GetString() ?? "";
+                    }
+                }
             }
         }
 
@@ -229,7 +316,7 @@ public sealed class RemoteTranscriber
             if (resultsArray.MoveNext() && resultsArray.Current.ValueKind == JsonValueKind.Object)
             {
                 var firstResult = resultsArray.Current;
-                foreach (var key in new[] { "text", "transcription" })
+                foreach (var key in new[] { "text", "transcription", "content" })
                 {
                     if (firstResult.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
                     {
@@ -246,18 +333,28 @@ public sealed class RemoteTranscriber
         // Try nested data object
         if (response.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
         {
-            foreach (var key in new[] { "text", "transcription", "result" })
+            foreach (var key in new[] { "text", "transcription", "result", "content" })
             {
                 if (data.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
                 {
                     return textElement.GetString() ?? "";
                 }
             }
+            // Try nested structure in data
+            if (data.TryGetProperty("text", out var dataText) && dataText.ValueKind == JsonValueKind.Object)
+            {
+                if (dataText.TryGetProperty("content", out var textContent) && textContent.ValueKind == JsonValueKind.String)
+                {
+                    return textContent.GetString() ?? "";
+                }
+            }
         }
 
+        try { Logger.Log($"ExtractTextFromResponse: Could not find text in response structure: {response.ToString()[..Math.Min(500, response.ToString().Length)]}"); } catch { }
+        
         throw new TranscriberException(
             TranscriberErrorType.ParseError,
-            "API response does not contain transcription text",
+            "API response does not contain transcription text in any recognized format",
             responseText: response.ToString());
     }
 

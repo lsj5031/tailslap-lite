@@ -47,6 +47,9 @@ public sealed class TranscriberConfig
     public string? ApiKeyEncrypted { get; set; } = null;
     public int TimeoutSeconds { get; set; } = 30;
     public bool AutoPaste { get; set; } = true;
+    public bool EnableVAD { get; set; } = false;
+    public int SilenceThresholdMs { get; set; } = 1000;
+    public int PreferredMicrophoneIndex { get; set; } = -1;
 
     [JsonIgnore]
     public string? ApiKey
@@ -123,6 +126,11 @@ public sealed class ConfigService
         return timeoutSeconds > 0 && timeoutSeconds <= 300;
     }
 
+    public static bool IsValidSilenceThreshold(int thresholdMs)
+    {
+        return thresholdMs >= 100 && thresholdMs <= 5000;
+    }
+
     public AppConfig CreateValidatedCopy()
     {
         var cfg = LoadOrDefault();
@@ -163,12 +171,17 @@ public sealed class ConfigService
         {
             cfg.Transcriber.TimeoutSeconds = 30;
         }
+
+        if (!IsValidSilenceThreshold(cfg.Transcriber.SilenceThresholdMs))
+        {
+            cfg.Transcriber.SilenceThresholdMs = 1000;
+        }
         
         // Default transcriber hotkey to Ctrl+Alt+T
         if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
         {
-            cfg.TranscriberHotkey.Modifiers = 0x0003; // CTRL + ALT
-            cfg.TranscriberHotkey.Key = (uint)Keys.T;
+            cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
+            cfg.TranscriberHotkey.Key = (uint)Keys.OemSemicolon;
         }
         
         return cfg;

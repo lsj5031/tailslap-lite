@@ -27,8 +27,12 @@ public sealed class SettingsForm : Form
     private TextBox? _transcriberTimeout;
     private TextBox? _transcriberApiKey;
     private TextBox? _transcriberHotkey;
+    private CheckBox? _enableVAD;
+    private TextBox? _silenceThreshold;
+    private ComboBox? _microphoneDropdown;
     private Button? _captureTranscriberHotkeyButton;
     private Button? _testTranscriberConnectionButton;
+    private Button? _detectMicrophonesButton;
 
     public SettingsForm(AppConfig cfg)
     {
@@ -133,14 +137,15 @@ public sealed class SettingsForm : Form
         _transcriberBaseUrl!.TextChanged += ValidateTranscriberInput;
         _transcriberModel!.TextChanged += ValidateTranscriberInput;
         _transcriberTimeout!.TextChanged += ValidateTranscriberInput;
+        _silenceThreshold!.TextChanged += ValidateTranscriberInput;
     }
 
     private TableLayoutPanel CreateTranscriberTab()
     {
-        var transcriber = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 8, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        var transcriber = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 12, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 8; i++) transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int i = 0; i < 12; i++) transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox { Text = "Enable Remote Transcription", Checked = _cfg.Transcriber.Enabled, AutoSize = true, Dock = DockStyle.Fill };
         transcriber.Controls.Add(new Label { Text = "Enabled", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
@@ -162,22 +167,67 @@ public sealed class SettingsForm : Form
         transcriber.Controls.Add(new Label { Text = "API Key", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 4);
         transcriber.Controls.Add(_transcriberApiKey, 1, 4);
 
+        _enableVAD = new CheckBox { Text = "Enable Voice Activity Detection (VAD)", Checked = _cfg.Transcriber.EnableVAD, AutoSize = true, Dock = DockStyle.Fill };
+        transcriber.Controls.Add(new Label { Text = "Voice Activity Detection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 5);
+        transcriber.Controls.Add(_enableVAD, 1, 5);
+
+        _silenceThreshold = new TextBox { Text = _cfg.Transcriber.SilenceThresholdMs.ToString(), Dock = DockStyle.Fill, Enabled = _cfg.Transcriber.EnableVAD };
+        transcriber.Controls.Add(new Label { Text = "Silence Threshold (ms)", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 6);
+        transcriber.Controls.Add(_silenceThreshold, 1, 6);
+
+        _microphoneDropdown = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+        RefreshMicrophoneList();
+        if (_cfg.Transcriber.PreferredMicrophoneIndex >= 0 && _cfg.Transcriber.PreferredMicrophoneIndex < _microphoneDropdown.Items.Count)
+            _microphoneDropdown.SelectedIndex = _cfg.Transcriber.PreferredMicrophoneIndex;
+        else if (_microphoneDropdown.Items.Count > 0)
+            _microphoneDropdown.SelectedIndex = 0;
+        transcriber.Controls.Add(new Label { Text = "Microphone", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 7);
+        transcriber.Controls.Add(_microphoneDropdown, 1, 7);
+
+        _detectMicrophonesButton = new Button { Text = "Detect Microphones", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        _detectMicrophonesButton!.Click += DetectMicrophones;
+        transcriber.Controls.Add(_detectMicrophonesButton, 1, 8);
+
         _transcriberHotkey = new TextBox { ReadOnly = true, Text = GetHotkeyDisplay(_cfg.TranscriberHotkey), Dock = DockStyle.Fill };
-        transcriber.Controls.Add(new Label { Text = "Hotkey", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 5);
-        transcriber.Controls.Add(_transcriberHotkey, 1, 5);
+        transcriber.Controls.Add(new Label { Text = "Hotkey", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 9);
+        transcriber.Controls.Add(_transcriberHotkey, 1, 9);
 
         var hotkeyButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _captureTranscriberHotkeyButton = new Button { Text = "Change Hotkey", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
         hotkeyButtons.Controls.Add(_captureTranscriberHotkeyButton);
-        transcriber.Controls.Add(hotkeyButtons, 1, 6);
+        transcriber.Controls.Add(hotkeyButtons, 1, 10);
 
         _testTranscriberConnectionButton = new Button { Text = "Test Transcription API", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _testTranscriberConnectionButton!.Click += TestTranscriberConnection;
-        transcriber.Controls.Add(new Label { Text = "Test Connection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 6);
-        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 6);
+        transcriber.Controls.Add(new Label { Text = "Test Connection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 11);
+        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 11);
+
+        // Enable/disable VAD controls based on checkbox
+        _enableVAD!.CheckedChanged += (_, __) => _silenceThreshold!.Enabled = _enableVAD.Checked;
 
         return transcriber;
+    }
+
+    private void RefreshMicrophoneList()
+    {
+        _microphoneDropdown!.Items.Clear();
+        var mics = AudioRecorder.GetAvailableMicrophones();
+        foreach (var mic in mics)
+        {
+            _microphoneDropdown.Items.Add(mic);
+        }
+        if (_microphoneDropdown.Items.Count == 0)
+        {
+            _microphoneDropdown.Items.Add("(No microphones detected)");
+            _microphoneDropdown.Enabled = false;
+        }
+    }
+
+    private void DetectMicrophones(object? sender, EventArgs e)
+    {
+        RefreshMicrophoneList();
+        NotificationService.ShowInfo($"Found {_microphoneDropdown!.Items.Count} microphone(s).");
     }
 
     private void ApplyChanges()
@@ -196,8 +246,9 @@ public sealed class SettingsForm : Form
         if (double.TryParse(_temperature.Text.Trim(), out var t)) _cfg.Llm.Temperature = t;
         var mt = _maxTokens.Text.Trim();
         _cfg.Llm.MaxTokens = string.IsNullOrEmpty(mt) ? null : (int?)int.Parse(mt);
-        var k = _apiKey.Text;
-        if (!string.IsNullOrWhiteSpace(k)) _cfg.Llm.ApiKey = k.Trim();
+        // Allow clearing LLM API key if blank
+        var k = _apiKey.Text.Trim();
+        _cfg.Llm.ApiKey = string.IsNullOrWhiteSpace(k) ? null : k;
         _cfg.Llm.HttpReferer = string.IsNullOrWhiteSpace(_referer.Text) ? null : _referer.Text.Trim();
         _cfg.Llm.XTitle = string.IsNullOrWhiteSpace(_xTitle.Text) ? null : _xTitle.Text.Trim();
         _cfg.UseClipboardFallback = _clipboardFallback.Checked;
@@ -207,8 +258,14 @@ public sealed class SettingsForm : Form
         _cfg.Transcriber.BaseUrl = _transcriberBaseUrl!.Text.Trim();
         _cfg.Transcriber.Model = _transcriberModel!.Text.Trim();
         if (int.TryParse(_transcriberTimeout!.Text.Trim(), out var timeout)) _cfg.Transcriber.TimeoutSeconds = timeout;
-        var transcriberKey = _transcriberApiKey!.Text;
-        if (!string.IsNullOrWhiteSpace(transcriberKey)) _cfg.Transcriber.ApiKey = transcriberKey.Trim();
+        // Allow clearing transcriber API key if blank
+        var transcriberKey = _transcriberApiKey!.Text.Trim();
+        _cfg.Transcriber.ApiKey = string.IsNullOrWhiteSpace(transcriberKey) ? null : transcriberKey;
+        
+        // Apply new transcriber settings
+        _cfg.Transcriber.EnableVAD = _enableVAD!.Checked;
+        if (int.TryParse(_silenceThreshold!.Text.Trim(), out var silence)) _cfg.Transcriber.SilenceThresholdMs = silence;
+        _cfg.Transcriber.PreferredMicrophoneIndex = _microphoneDropdown!.SelectedIndex >= 0 ? _microphoneDropdown.SelectedIndex : -1;
     }
 
     private void ValidateInput(object? sender, EventArgs e)
@@ -281,6 +338,15 @@ public sealed class SettingsForm : Form
         {
             errors.Add("Model name is required for transcriber");
         }
+
+        // Validate silence threshold
+        if (!string.IsNullOrWhiteSpace(_silenceThreshold!.Text))
+        {
+            if (!int.TryParse(_silenceThreshold.Text, out var silence) || silence < 100 || silence > 5000)
+            {
+                errors.Add("Silence threshold must be between 100 and 5000 ms");
+            }
+        }
         
         _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
         _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
@@ -344,7 +410,7 @@ public sealed class SettingsForm : Form
                 ApiKey = _transcriberApiKey!.Text.Trim()
             };
             
-            var testTranscriber = new RemoteTranscriber(testConfig);
+            using var testTranscriber = new RemoteTranscriber(testConfig);
             await testTranscriber.TestConnectionAsync();
             
             NotificationService.ShowSuccess("Transcription API connection test successful!");
@@ -386,10 +452,17 @@ public sealed class SettingsForm : Form
         if ((hotkey.Modifiers & 0x0008) != 0) parts.Add("WIN");
         
         var keyName = ((Keys)hotkey.Key).ToString();
-        if (keyName.StartsWith("D") && keyName.Length == 2)
+        if (keyName.StartsWith("D") && keyName.Length == 2 && char.IsDigit(keyName[1]))
         {
             keyName = keyName.Substring(1);
         }
+        else if (keyName == "OemSemicolon" || keyName == "Oem1") keyName = ";";
+        else if (keyName == "OemQuestion" || keyName == "Oem2") keyName = "?";
+        else if (keyName == "OemTilde" || keyName == "Oem3") keyName = "~";
+        else if (keyName == "OemOpenBrackets" || keyName == "Oem4") keyName = "[";
+        else if (keyName == "OemPipe" || keyName == "Oem5") keyName = "|";
+        else if (keyName == "OemCloseBrackets" || keyName == "Oem6") keyName = "]";
+        else if (keyName == "OemQuotes" || keyName == "Oem7") keyName = "'";
         
         parts.Add(keyName);
         return string.Join("+", parts);
@@ -423,6 +496,19 @@ public sealed class SettingsForm : Form
             _transcriberModel!.Text = defaultCfg.Transcriber.Model;
             _transcriberTimeout!.Text = defaultCfg.Transcriber.TimeoutSeconds.ToString();
             _transcriberApiKey!.Text = "";
+            _enableVAD!.Checked = defaultCfg.Transcriber.EnableVAD;
+            _silenceThreshold!.Text = defaultCfg.Transcriber.SilenceThresholdMs.ToString();
+            _silenceThreshold.Enabled = defaultCfg.Transcriber.EnableVAD;
+            if (defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0 && defaultCfg.Transcriber.PreferredMicrophoneIndex < _microphoneDropdown!.Items.Count)
+                _microphoneDropdown.SelectedIndex = defaultCfg.Transcriber.PreferredMicrophoneIndex;
+            
+            // Reset Hotkeys in the config object as well, since they aren't read back/saved in ApplyChanges like other fields
+            _cfg.Hotkey.Modifiers = defaultCfg.Hotkey.Modifiers;
+            _cfg.Hotkey.Key = defaultCfg.Hotkey.Key;
+            
+            _cfg.TranscriberHotkey.Modifiers = defaultCfg.TranscriberHotkey.Modifiers;
+            _cfg.TranscriberHotkey.Key = defaultCfg.TranscriberHotkey.Key;
+            
             _transcriberHotkey!.Text = GetHotkeyDisplay(defaultCfg.TranscriberHotkey);
             
             NotificationService.ShowInfo("Settings reset to defaults.");

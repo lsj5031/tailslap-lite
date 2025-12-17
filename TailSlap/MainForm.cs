@@ -6,6 +6,7 @@ using System.Text;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Threading;
 using System.Threading.Tasks;
 
 public class MainForm : Form
@@ -29,6 +30,7 @@ public class MainForm : Form
     private AppConfig _currentConfig;
     private bool _isRefining;
     private bool _isTranscribing;
+    private CancellationTokenSource? _transcriberCts;
 
     public MainForm()
     {
@@ -324,21 +326,57 @@ public class MainForm : Form
         _ = RefineSelectionAsync().ContinueWith(_ => _isRefining = false);
     }
 
-    private void TriggerTranscribe()
+    private async void TriggerTranscribe()
     {
+        bool hasActiveCts = _transcriberCts != null && !_transcriberCts.IsCancellationRequested;
+        Logger.Log($"TriggerTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, hasActiveCts: {hasActiveCts}, _isTranscribing: {_isTranscribing}");
+        
         if (!_currentConfig.Transcriber.Enabled)
         {
+            Logger.Log("Transcriber is disabled");
             try { NotificationService.ShowWarning("Remote transcription is disabled. Enable it in settings first."); } catch { }
             return;
         }
         
-        if (_isTranscribing)
+        // If recording is in progress (CTS exists and is not cancelled), stop it
+        if (hasActiveCts)
         {
-            try { NotificationService.ShowWarning("Transcription already in progress. Please wait."); } catch { }
+            Logger.Log("Stopping recording via cancellation token");
+            try 
+            { 
+                _transcriberCts?.Cancel(); 
+            } 
+            catch (Exception ex)
+            {
+                Logger.Log($"Error cancelling transcription task: {ex.Message}");
+            }
             return;
         }
+        
+        // If transcription is already in progress but recording is done, wait (don't allow new recording yet)
+        if (_isTranscribing)
+        {
+            Logger.Log("Transcription already in progress - waiting for completion");
+            try { NotificationService.ShowWarning("Transcription in progress. Please wait for completion."); } catch { }
+            return;
+        }
+        
+        Logger.Log("Starting new transcription task");
         _isTranscribing = true;
-        _ = TranscribeSelectionAsync().ContinueWith(_ => _isTranscribing = false);
+        
+        try
+        {
+            await TranscribeSelectionAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"CRITICAL: Transcription task failed at top level: {ex.Message}");
+        }
+        finally
+        {
+            Logger.Log("Transcription task completed top-level finally"); 
+            _isTranscribing = false; 
+        }
     }
 
     private async Task RefineSelectionAsync()
@@ -399,53 +437,81 @@ public class MainForm : Form
 
     private async Task TranscribeSelectionAsync()
     {
+        string audioFilePath = "";
+        RecordingStats? recordingStats = null;
         try
         {
             Logger.Log("TranscribeSelectionAsync started");
+            Logger.Log($"Transcriber config: BaseUrl={_currentConfig.Transcriber.BaseUrl}, Model={_currentConfig.Transcriber.Model}, Timeout={_currentConfig.Transcriber.TimeoutSeconds}s");
+            _transcriberCts = new CancellationTokenSource();
+            Logger.Log($"Created new CancellationTokenSource: {_transcriberCts?.GetHashCode()}");
+            
+            // Start animation and show recording notification
             StartAnim();
+            try { NotificationService.ShowInfo("🎤 Recording... Press hotkey again to stop."); } catch { }
             
             // Record audio from microphone
-            string audioFilePath = Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav");
+            audioFilePath = Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav");
+            Logger.Log($"Audio file path: {audioFilePath}");
             try
             {
                 Logger.Log("Starting audio recording from microphone");
-                // Record audio from microphone using NAudio or similar
-                // For now, we'll use a simple implementation
-                await RecordAudioAsync(audioFilePath);
-                Logger.Log($"Audio recorded to: {audioFilePath}");
+                recordingStats = await RecordAudioAsync(audioFilePath);
+                
+                if (recordingStats.SilenceDetected)
+                {
+                    Logger.Log($"Audio recording stopped early due to silence detection at {recordingStats.DurationMs}ms");
+                }
+                Logger.Log($"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms");
+                
+                if (recordingStats.DurationMs < 500)
+                {
+                    Logger.Log("Recording too short (< 500ms), skipping transcription.");
+                    try { NotificationService.ShowWarning("Recording too short. Please speak longer."); } catch { }
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Logger.Log("Audio recording was stopped by user");
+                // If user stopped it very quickly, we should also check duration here
+                if (recordingStats != null && recordingStats.DurationMs < 500)
+                {
+                     try { NotificationService.ShowWarning("Recording cancelled (too short)."); } catch { }
+                     return;
+                }
             }
             catch (Exception ex)
             {
                 try { NotificationService.ShowError("Failed to record audio from microphone. Please check your microphone permissions."); } catch { }
-                Logger.Log($"Audio recording failed: {ex.Message}");
+                Logger.Log($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
                 return;
             }
 
+            // Show transcribing animation
+            try { NotificationService.ShowInfo("Sending to transcriber..."); } catch { }
+            
             // Transcribe audio using remote API
-            var transcriber = new RemoteTranscriber(_currentConfig.Transcriber);
+            Logger.Log($"Creating RemoteTranscriber with BaseUrl: {_currentConfig.Transcriber.BaseUrl}");
+            using var transcriber = new RemoteTranscriber(_currentConfig.Transcriber);
             string transcriptionText;
             
             try
             {
-                Logger.Log("Starting remote transcription");
+                Logger.Log($"Starting remote transcription of {audioFilePath}");
                 transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
-                Logger.Log($"Transcription completed: {transcriptionText?.Length ?? 0} characters");
+                Logger.Log($"Transcription completed: {transcriptionText?.Length ?? 0} characters, text={transcriptionText?.Substring(0, Math.Min(100, transcriptionText?.Length ?? 0))}");
             }
             catch (TranscriberException ex)
             {
-                if (ex.IsRetryable())
-                {
-                    try { NotificationService.ShowWarning($"Transcription failed, but will retry. Error: {ex.Message}"); } catch { }
-                }
-                else
-                {
-                    try { NotificationService.ShowError($"Transcription failed permanently: {ex.Message}"); } catch { }
-                    return;
-                }
-                throw; // Re-throw for outer catch
+                Logger.Log($"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}");
+                try { NotificationService.ShowError($"Transcription failed: {ex.Message}"); } catch { }
+                Logger.Log($"Transcription error: {ex.Message}");
+                return;
             }
             catch (Exception ex)
             {
+                Logger.Log($"Unexpected exception: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}");
                 try { NotificationService.ShowError($"Transcription failed: {ex.Message}"); } catch { }
                 Logger.Log("Error: " + ex.Message);
                 return;
@@ -468,12 +534,15 @@ public class MainForm : Form
             if (_currentConfig.Transcriber.AutoPaste) 
             { 
                 Logger.Log("Transcriber auto-paste attempt");
-                bool pasteSuccess = await _clip.PasteAsync().ConfigureAwait(true);
-                if (!pasteSuccess)
+                // Run paste on UI thread to ensure SendKeys works correctly
+                this.Invoke((MethodInvoker)async delegate 
                 {
-                    // Error already shown by Paste method
-                    try { NotificationService.ShowInfo("Transcription is ready. You can paste manually with Ctrl+V."); } catch { }
-                }
+                    bool pasteSuccess = await _clip.PasteAsync();
+                    if (!pasteSuccess)
+                    {
+                        try { NotificationService.ShowInfo("Transcription is ready. You can paste manually with Ctrl+V."); } catch { }
+                    }
+                });
             }
             else
             {
@@ -483,65 +552,87 @@ public class MainForm : Form
             // Log transcription to history (separate from LLM refinement history)
             try 
             { 
-                Logger.Log($"Transcription logged: {transcriptionText.Length} characters");
+                HistoryService.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0, recordingStats?.SilenceDetected ?? false);
+                Logger.Log($"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms");
             } 
-            catch { }
+            catch (Exception ex)
+            {
+                try { Logger.Log($"Failed to log transcription to history: {ex.Message}"); } catch { }
+            }
             
             Logger.Log("Transcription completed successfully.");
         }
         catch (Exception ex) 
         { 
             try { NotificationService.ShowError("Transcription failed: " + ex.Message); } catch { }
-            Logger.Log("Error: " + ex.Message);
+            Logger.Log($"TranscribeSelectionAsync error: {ex.GetType().Name}: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                Logger.Log($"Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+            }
         }
         finally 
         { 
             StopAnim();
+            
+            // Clean up cancellation token
+            _transcriberCts?.Dispose();
+            _transcriberCts = null;
+            
             // Clean up temporary audio file
             try
             {
-                if (File.Exists(Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav")))
+                if (!string.IsNullOrEmpty(audioFilePath) && File.Exists(audioFilePath))
                 {
-                    File.Delete(Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav"));
+                    File.Delete(audioFilePath);
                 }
             }
             catch { }
         }
     }
 
-    private async Task RecordAudioAsync(string audioFilePath)
+    private async Task<RecordingStats> RecordAudioAsync(string audioFilePath)
     {
-        // Placeholder implementation for audio recording
-        // This would need to be implemented with NAudio or similar library
-        // For now, we'll create a silence file for testing
-        await Task.Delay(2000); // Simulate recording time
-        
-        // Create a simple WAV file with silence
-        using var fileStream = File.Create(audioFilePath);
-        using var writer = new BinaryWriter(fileStream);
-        
-        // WAV header
-        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-        writer.Write(36); // File size - 8
-        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
-        writer.Write(Encoding.ASCII.GetBytes("fmt "));
-        writer.Write(16); // Subchunk1Size
-        writer.Write((short)1); // AudioFormat
-        writer.Write((short)1); // NumChannels
-        writer.Write(16000); // SampleRate
-        writer.Write(32000); // ByteRate
-        writer.Write((short)2); // BlockAlign
-        writer.Write((short)16); // BitsPerSample
-        writer.Write(Encoding.ASCII.GetBytes("data"));
-        writer.Write(0); // Subchunk2Size
-        
-        // Write silence data (2 seconds at 16kHz)
-        int sampleRate = 16000;
-        int durationMs = 2000;
-        int numSamples = (sampleRate * durationMs) / 1000;
-        for (int i = 0; i < numSamples; i++)
+        Logger.Log($"RecordAudioAsync started. PreferredMic: {_currentConfig.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {_currentConfig.Transcriber.EnableVAD}, VADThreshold: {_currentConfig.Transcriber.SilenceThresholdMs}ms");
+        using var recorder = new AudioRecorder(_currentConfig.Transcriber.PreferredMicrophoneIndex);
+        try
         {
-            writer.Write((short)0);
+            // maxDurationMs = 0 means record until cancellation (hotkey-based toggle)
+            Logger.Log($"Starting recorder with CancellationToken");
+            var stats = await recorder.RecordAsync(
+                audioFilePath,
+                maxDurationMs: 0,
+                ct: _transcriberCts?.Token ?? CancellationToken.None,
+                enableVAD: _currentConfig.Transcriber.EnableVAD,
+                silenceThresholdMs: _currentConfig.Transcriber.SilenceThresholdMs
+            );
+            
+            Logger.Log($"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}");
+            if (!File.Exists(audioFilePath))
+            {
+                Logger.Log($"ERROR: Audio file not created at {audioFilePath}");
+            }
+            else
+            {
+                var fileInfo = new FileInfo(audioFilePath);
+                Logger.Log($"Audio file created: {audioFilePath}, size: {fileInfo.Length} bytes");
+            }
+            return stats;
+        }
+        catch (OperationCanceledException ex)
+        {
+            Logger.Log($"Recording cancelled: {ex.Message}");
+            throw;
+        }
+        catch (InvalidOperationException ex)
+        {
+            Logger.Log($"AudioRecorder error: {ex.Message}");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"RecordAudioAsync unexpected error: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}");
+            throw;
         }
     }
 
@@ -618,14 +709,24 @@ public class MainForm : Form
         if (dlg.ShowDialog() == DialogResult.OK)
         {
             _config.Save(_currentConfig);
-            
+            // Reload config from disk to ensure all validation/normalization is applied
+            _currentConfig = _config.LoadOrDefault();
+
+            // Re-register refinement hotkey
+            try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
+            _currentMods = _currentConfig.Hotkey.Modifiers;
+            _currentVk = _currentConfig.Hotkey.Key;
+            RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+
             // Re-register transcriber hotkey if transcriber was enabled/disabled
             try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
+            _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+            _transcriberVk = _currentConfig.TranscriberHotkey.Key;
             if (_currentConfig.Transcriber.Enabled)
             {
-                RegisterHotkey(_currentConfig.TranscriberHotkey.Modifiers, _currentConfig.TranscriberHotkey.Key, TRANSCRIBER_HOTKEY_ID);
+                RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
             }
-            
+
             NotificationService.ShowSuccess("Settings saved.");
         }
     }
