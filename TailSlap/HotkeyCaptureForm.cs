@@ -148,12 +148,23 @@ public sealed class HotkeyCaptureForm : Form
 
     private static string BuildDisplay(bool ctrl, bool alt, bool shift, bool win, Keys key)
     {
-        System.Collections.Generic.List<string> parts = new();
+        var parts = new System.Collections.Generic.List<string>();
         if (ctrl) parts.Add("Ctrl");
         if (alt) parts.Add("Alt");
         if (shift) parts.Add("Shift");
         if (win) parts.Add("Win");
-        parts.Add(key.ToString());
+        
+        string keyName = key.ToString();
+        if (keyName.StartsWith("D") && keyName.Length == 2 && char.IsDigit(keyName[1])) keyName = keyName.Substring(1);
+        else if (keyName == "OemSemicolon" || keyName == "Oem1") keyName = ";";
+        else if (keyName == "OemQuestion" || keyName == "Oem2") keyName = "?";
+        else if (keyName == "OemTilde" || keyName == "Oem3") keyName = "~";
+        else if (keyName == "OemOpenBrackets" || keyName == "Oem4") keyName = "[";
+        else if (keyName == "OemPipe" || keyName == "Oem5") keyName = "|";
+        else if (keyName == "OemCloseBrackets" || keyName == "Oem6") keyName = "]";
+        else if (keyName == "OemQuotes" || keyName == "Oem7") keyName = "'";
+        
+        parts.Add(keyName);
         return string.Join("+", parts);
     }
 

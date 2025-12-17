@@ -8,13 +8,15 @@ public sealed class AppConfig
 {
     public bool AutoPaste { get; set; } = true;
     public bool UseClipboardFallback { get; set; } = true;
-    public HotkeyConfig Hotkey { get; set; } = new();
+    public HotkeyConfig Hotkey { get; set; } = new(); // Ctrl+Alt+R for LLM
+    public HotkeyConfig TranscriberHotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
     public LlmConfig Llm { get; set; } = new();
+    public TranscriberConfig Transcriber { get; set; } = new();
 }
 
 public sealed class HotkeyConfig 
 { 
-    public uint Modifiers { get; set; } = 0x0003;
+    public uint Modifiers { get; set; } = 0x0003; // ALT + CTRL
     public uint Key { get; set; } = (uint)Keys.R;
 }
 
@@ -28,6 +30,26 @@ public sealed class LlmConfig
     public string? ApiKeyEncrypted { get; set; } = null;
     public string? HttpReferer { get; set; } = null;
     public string? XTitle { get; set; } = null;
+
+    [JsonIgnore]
+    public string? ApiKey
+    {
+        get => string.IsNullOrEmpty(ApiKeyEncrypted) ? null : Dpapi.Unprotect(ApiKeyEncrypted);
+        set => ApiKeyEncrypted = string.IsNullOrEmpty(value) ? null : Dpapi.Protect(value!);
+    }
+}
+
+public sealed class TranscriberConfig
+{
+    public bool Enabled { get; set; } = true;
+    public string BaseUrl { get; set; } = "http://localhost:18000/v1/audio/transcriptions";
+    public string Model { get; set; } = "glm-nano-2512";
+    public string? ApiKeyEncrypted { get; set; } = null;
+    public int TimeoutSeconds { get; set; } = 30;
+    public bool AutoPaste { get; set; } = true;
+    public bool EnableVAD { get; set; } = false;
+    public int SilenceThresholdMs { get; set; } = 1000;
+    public int PreferredMicrophoneIndex { get; set; } = -1;
 
     [JsonIgnore]
     public string? ApiKey
@@ -99,6 +121,16 @@ public sealed class ConfigService
                modelName.Trim().Length > 0;
     }
 
+    public static bool IsValidTimeout(int timeoutSeconds)
+    {
+        return timeoutSeconds > 0 && timeoutSeconds <= 300;
+    }
+
+    public static bool IsValidSilenceThreshold(int thresholdMs)
+    {
+        return thresholdMs >= 100 && thresholdMs <= 5000;
+    }
+
     public AppConfig CreateValidatedCopy()
     {
         var cfg = LoadOrDefault();
@@ -122,6 +154,34 @@ public sealed class ConfigService
         if (!IsValidModelName(cfg.Llm.Model))
         {
             cfg.Llm.Model = "llama3.1";
+        }
+        
+        // Validate transcriber settings
+        if (!IsValidUrl(cfg.Transcriber.BaseUrl))
+        {
+            cfg.Transcriber.BaseUrl = "http://localhost:18000/v1/audio/transcriptions";
+        }
+        
+        if (!IsValidModelName(cfg.Transcriber.Model))
+        {
+            cfg.Transcriber.Model = "glm-nano-2512";
+        }
+        
+        if (!IsValidTimeout(cfg.Transcriber.TimeoutSeconds))
+        {
+            cfg.Transcriber.TimeoutSeconds = 30;
+        }
+
+        if (!IsValidSilenceThreshold(cfg.Transcriber.SilenceThresholdMs))
+        {
+            cfg.Transcriber.SilenceThresholdMs = 1000;
+        }
+        
+        // Default transcriber hotkey to Ctrl+Alt+T
+        if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
+        {
+            cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
+            cfg.TranscriberHotkey.Key = (uint)Keys.OemSemicolon;
         }
         
         return cfg;

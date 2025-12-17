@@ -1,10 +1,12 @@
 using System;
 using System.Drawing;
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Threading;
 using System.Threading.Tasks;
 
 public class MainForm : Form
@@ -16,14 +18,19 @@ public class MainForm : Form
     private Icon[] _frames;
     private Icon _idleIcon;
     private const int WM_HOTKEY = 0x0312;
-    private const int HOTKEY_ID = 1;
+    private const int REFINEMENT_HOTKEY_ID = 1;
+    private const int TRANSCRIBER_HOTKEY_ID = 2;
 
     private readonly ConfigService _config;
     private readonly ClipboardService _clip;
     private uint _currentMods;
     private uint _currentVk;
+    private uint _transcriberMods;
+    private uint _transcriberVk;
     private AppConfig _currentConfig;
     private bool _isRefining;
+    private bool _isTranscribing;
+    private CancellationTokenSource? _transcriberCts;
 
     public MainForm()
     {
@@ -37,13 +44,12 @@ public class MainForm : Form
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
-        var autoPasteItem = new ToolStripMenuItem("Auto Paste") { Checked = _currentConfig.AutoPaste };
-        autoPasteItem.Click += (_, __) => { _currentConfig.AutoPaste = !_currentConfig.AutoPaste; autoPasteItem.Checked = _currentConfig.AutoPaste; _config.Save(_currentConfig); };
-        _menu.Items.Add(autoPasteItem);
-        _menu.Items.Add("Change Hotkey", null, (_, __) => ChangeHotkey(_currentConfig));
+        _menu.Items.Add("Transcribe Now", null, (_, __) => TriggerTranscribe());
+        _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(_currentConfig));
         _menu.Items.Add("Open Logs...", null, (_, __) => { try { Process.Start("notepad", System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log")); } catch { NotificationService.ShowError("Failed to open logs."); } });
-        _menu.Items.Add("History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
+        _menu.Items.Add("Refinement History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
+        _menu.Items.Add("Transcription History...", null, (_, __) => { try { using var hf = new TranscriptionHistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open transcription history."); } });
         var autoStartItem = new ToolStripMenuItem("Start with Windows") { Checked = AutoStartService.IsEnabled("TailSlap") };
         autoStartItem.Click += (_, __) => { AutoStartService.Toggle("TailSlap"); autoStartItem.Checked = AutoStartService.IsEnabled("TailSlap"); };
         _menu.Items.Add(autoStartItem);
@@ -80,7 +86,9 @@ public class MainForm : Form
         
         _currentMods = _currentConfig.Hotkey.Modifiers;
         _currentVk = _currentConfig.Hotkey.Key;
-        Logger.Log($"MainForm initialized. Planned hotkey mods={_currentMods}, key={_currentVk}");
+        _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+        _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+        Logger.Log($"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Transcriber hotkey mods={_transcriberMods}, key={_transcriberVk}");
     }
 
     private Icon[] LoadChewingFramesOrFallback()
@@ -261,12 +269,17 @@ public class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        RegisterHotkey(_currentMods, _currentVk);
+        RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+        if (_currentConfig.Transcriber.Enabled)
+        {
+            RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+        }
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        try { UnregisterHotKey(Handle, HOTKEY_ID); } catch { }
+        try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
+        try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
         base.OnHandleDestroyed(e);
     }
 
@@ -281,14 +294,28 @@ public class MainForm : Form
     {
         if (m.Msg == WM_HOTKEY)
         {
-            Logger.Log("WM_HOTKEY received");
-            TriggerRefine();
+            var hotkeyId = m.WParam.ToInt32();
+            Logger.Log($"WM_HOTKEY received with ID: {hotkeyId}");
+            
+            if (hotkeyId == REFINEMENT_HOTKEY_ID)
+            {
+                TriggerRefine();
+            }
+            else if (hotkeyId == TRANSCRIBER_HOTKEY_ID)
+            {
+                TriggerTranscribe();
+            }
         }
         base.WndProc(ref m);
     }
 
     private void TriggerRefine()
     {
+        if (!_currentConfig.Llm.Enabled)
+        {
+            try { NotificationService.ShowWarning("LLM processing is disabled. Enable it in settings first."); } catch { }
+            return;
+        }
         if (_isRefining)
         {
             try { NotificationService.ShowWarning("Refinement already in progress. Please wait."); } catch { }
@@ -296,6 +323,59 @@ public class MainForm : Form
         }
         _isRefining = true;
         _ = RefineSelectionAsync().ContinueWith(_ => _isRefining = false);
+    }
+
+    private async void TriggerTranscribe()
+    {
+        bool hasActiveCts = _transcriberCts != null && !_transcriberCts.IsCancellationRequested;
+        Logger.Log($"TriggerTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, hasActiveCts: {hasActiveCts}, _isTranscribing: {_isTranscribing}");
+        
+        if (!_currentConfig.Transcriber.Enabled)
+        {
+            Logger.Log("Transcriber is disabled");
+            try { NotificationService.ShowWarning("Remote transcription is disabled. Enable it in settings first."); } catch { }
+            return;
+        }
+        
+        // If recording is in progress (CTS exists and is not cancelled), stop it
+        if (hasActiveCts)
+        {
+            Logger.Log("Stopping recording via cancellation token");
+            try 
+            { 
+                _transcriberCts?.Cancel(); 
+            } 
+            catch (Exception ex)
+            {
+                Logger.Log($"Error cancelling transcription task: {ex.Message}");
+            }
+            return;
+        }
+        
+        // If transcription is already in progress but recording is done, wait (don't allow new recording yet)
+        if (_isTranscribing)
+        {
+            Logger.Log("Transcription already in progress - waiting for completion");
+            try { NotificationService.ShowWarning("Transcription in progress. Please wait for completion."); } catch { }
+            return;
+        }
+        
+        Logger.Log("Starting new transcription task");
+        _isTranscribing = true;
+        
+        try
+        {
+            await TranscribeSelectionAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"CRITICAL: Transcription task failed at top level: {ex.Message}");
+        }
+        finally
+        {
+            Logger.Log("Transcription task completed top-level finally"); 
+            _isTranscribing = false; 
+        }
     }
 
     private async Task RefineSelectionAsync()
@@ -354,6 +434,210 @@ public class MainForm : Form
         finally { StopAnim(); }
     }
 
+    private async Task TranscribeSelectionAsync()
+    {
+        string audioFilePath = "";
+        RecordingStats? recordingStats = null;
+        try
+        {
+            Logger.Log("TranscribeSelectionAsync started");
+            Logger.Log($"Transcriber config: BaseUrl={_currentConfig.Transcriber.BaseUrl}, Model={_currentConfig.Transcriber.Model}, Timeout={_currentConfig.Transcriber.TimeoutSeconds}s");
+            _transcriberCts = new CancellationTokenSource();
+            Logger.Log($"Created new CancellationTokenSource: {_transcriberCts?.GetHashCode()}");
+            
+            // Start animation and show recording notification
+            StartAnim();
+            try { NotificationService.ShowInfo("🎤 Recording... Press hotkey again to stop."); } catch { }
+            
+            // Record audio from microphone
+            audioFilePath = Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav");
+            Logger.Log($"Audio file path: {audioFilePath}");
+            try
+            {
+                Logger.Log("Starting audio recording from microphone");
+                recordingStats = await RecordAudioAsync(audioFilePath);
+                
+                if (recordingStats.SilenceDetected)
+                {
+                    Logger.Log($"Audio recording stopped early due to silence detection at {recordingStats.DurationMs}ms");
+                }
+                Logger.Log($"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms");
+                
+                if (recordingStats.DurationMs < 500)
+                {
+                    Logger.Log("Recording too short (< 500ms), skipping transcription.");
+                    try { NotificationService.ShowWarning("Recording too short. Please speak longer."); } catch { }
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Logger.Log("Audio recording was stopped by user");
+                // If user stopped it very quickly, we should also check duration here
+                if (recordingStats != null && recordingStats.DurationMs < 500)
+                {
+                     try { NotificationService.ShowWarning("Recording cancelled (too short)."); } catch { }
+                     return;
+                }
+            }
+            catch (Exception ex)
+            {
+                try { NotificationService.ShowError("Failed to record audio from microphone. Please check your microphone permissions."); } catch { }
+                Logger.Log($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+
+            // Show transcribing animation
+            try { NotificationService.ShowInfo("Sending to transcriber..."); } catch { }
+            
+            // Transcribe audio using remote API
+            Logger.Log($"Creating RemoteTranscriber with BaseUrl: {_currentConfig.Transcriber.BaseUrl}");
+            using var transcriber = new RemoteTranscriber(_currentConfig.Transcriber);
+            string transcriptionText;
+            
+            try
+            {
+                Logger.Log($"Starting remote transcription of {audioFilePath}");
+                transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
+                Logger.Log($"Transcription completed: {transcriptionText?.Length ?? 0} characters, text={transcriptionText?.Substring(0, Math.Min(100, transcriptionText?.Length ?? 0))}");
+            }
+            catch (TranscriberException ex)
+            {
+                Logger.Log($"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}");
+                try { NotificationService.ShowError($"Transcription failed: {ex.Message}"); } catch { }
+                Logger.Log($"Transcription error: {ex.Message}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Unexpected exception: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}");
+                try { NotificationService.ShowError($"Transcription failed: {ex.Message}"); } catch { }
+                Logger.Log("Error: " + ex.Message);
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(transcriptionText) || 
+                transcriptionText.Equals("[Empty transcription]", StringComparison.OrdinalIgnoreCase) ||
+                transcriptionText.Equals("(empty)", StringComparison.OrdinalIgnoreCase) ||
+                transcriptionText.Equals("[silence]", StringComparison.OrdinalIgnoreCase)) 
+            { 
+                try { NotificationService.ShowWarning("No speech detected."); } catch { }
+                return; 
+            }
+            
+            // Set transcription result to clipboard
+            bool setTextSuccess = _clip.SetText(transcriptionText);
+            if (!setTextSuccess)
+            {
+                return; // Error already shown by SetText
+            }
+            
+            await Task.Delay(100);
+            if (_currentConfig.Transcriber.AutoPaste) 
+            { 
+                Logger.Log("Transcriber auto-paste attempt");
+                // Run paste on UI thread to ensure SendKeys works correctly
+                this.Invoke((MethodInvoker)async delegate 
+                {
+                    bool pasteSuccess = await _clip.PasteAsync();
+                    if (!pasteSuccess)
+                    {
+                        try { NotificationService.ShowInfo("Transcription is ready. You can paste manually with Ctrl+V."); } catch { }
+                    }
+                });
+            }
+            else
+            {
+                try { NotificationService.ShowTextReadyNotification(); } catch { }
+            }
+            
+            // Log transcription to history (separate from LLM refinement history)
+            try 
+            { 
+                HistoryService.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
+                Logger.Log($"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms");
+            } 
+            catch (Exception ex)
+            {
+                try { Logger.Log($"Failed to log transcription to history: {ex.Message}"); } catch { }
+            }
+            
+            Logger.Log("Transcription completed successfully.");
+        }
+        catch (Exception ex) 
+        { 
+            try { NotificationService.ShowError("Transcription failed: " + ex.Message); } catch { }
+            Logger.Log($"TranscribeSelectionAsync error: {ex.GetType().Name}: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                Logger.Log($"Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+            }
+        }
+        finally 
+        { 
+            StopAnim();
+            
+            // Clean up cancellation token
+            _transcriberCts?.Dispose();
+            _transcriberCts = null;
+            
+            // Clean up temporary audio file
+            try
+            {
+                if (!string.IsNullOrEmpty(audioFilePath) && File.Exists(audioFilePath))
+                {
+                    File.Delete(audioFilePath);
+                }
+            }
+            catch { }
+        }
+    }
+
+    private async Task<RecordingStats> RecordAudioAsync(string audioFilePath)
+    {
+        Logger.Log($"RecordAudioAsync started. PreferredMic: {_currentConfig.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {_currentConfig.Transcriber.EnableVAD}, VADThreshold: {_currentConfig.Transcriber.SilenceThresholdMs}ms");
+        using var recorder = new AudioRecorder(_currentConfig.Transcriber.PreferredMicrophoneIndex);
+        try
+        {
+            // maxDurationMs = 0 means record until cancellation (hotkey-based toggle)
+            Logger.Log($"Starting recorder with CancellationToken");
+            var stats = await recorder.RecordAsync(
+                audioFilePath,
+                maxDurationMs: 0,
+                ct: _transcriberCts?.Token ?? CancellationToken.None,
+                enableVAD: _currentConfig.Transcriber.EnableVAD,
+                silenceThresholdMs: _currentConfig.Transcriber.SilenceThresholdMs
+            );
+            
+            Logger.Log($"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}");
+            if (!File.Exists(audioFilePath))
+            {
+                Logger.Log($"ERROR: Audio file not created at {audioFilePath}");
+            }
+            else
+            {
+                var fileInfo = new FileInfo(audioFilePath);
+                Logger.Log($"Audio file created: {audioFilePath}, size: {fileInfo.Length} bytes");
+            }
+            return stats;
+        }
+        catch (OperationCanceledException ex)
+        {
+            Logger.Log($"Recording cancelled: {ex.Message}");
+            throw;
+        }
+        catch (InvalidOperationException ex)
+        {
+            Logger.Log($"AudioRecorder error: {ex.Message}");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"RecordAudioAsync unexpected error: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}");
+            throw;
+        }
+    }
+
     private static string Sha256Hex(string s)
     {
         try
@@ -378,27 +662,14 @@ public class MainForm : Form
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-    private void RegisterHotkey(uint mods, uint vk)
+    private void RegisterHotkey(uint mods, uint vk, int hotkeyId)
     {
-        try { if (Handle != IntPtr.Zero) UnregisterHotKey(Handle, HOTKEY_ID); } catch { }
+        try { if (Handle != IntPtr.Zero) UnregisterHotKey(Handle, hotkeyId); } catch { }
         if (mods == 0) mods = 0x0003;
         if (vk == 0) vk = (uint)Keys.R;
-        var ok = RegisterHotKey(Handle, HOTKEY_ID, mods, vk);
-        Logger.Log($"RegisterHotKey mods={mods}, key={vk}, ok={ok}");
+        var ok = RegisterHotKey(Handle, hotkeyId, mods, vk);
+        Logger.Log($"RegisterHotKey mods={mods}, key={vk}, id={hotkeyId}, ok={ok}");
         if (!ok) NotificationService.ShowError("Failed to register hotkey.");
-    }
-
-    private void ChangeHotkey(AppConfig cfg)
-    {
-        using var cap = new HotkeyCaptureForm();
-        if (cap.ShowDialog() != DialogResult.OK) return;
-        cfg.Hotkey.Modifiers = cap.Modifiers;
-        cfg.Hotkey.Key = cap.Key;
-        _config.Save(cfg);
-        _currentMods = cfg.Hotkey.Modifiers;
-        _currentVk = cfg.Hotkey.Key;
-        RegisterHotkey(_currentMods, _currentVk);
-        NotificationService.ShowSuccess($"Hotkey updated to {cap.Display}");
     }
 
     private void ShowSettings(AppConfig cfg)
@@ -406,7 +677,31 @@ public class MainForm : Form
         using var dlg = new SettingsForm(cfg);
         if (dlg.ShowDialog() == DialogResult.OK)
         {
+            Logger.Log($"Settings OK clicked. LLM hotkey before save: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}");
+            Logger.Log($"Transcriber hotkey before save: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}");
+            
             _config.Save(_currentConfig);
+            // Reload config from disk to ensure all validation/normalization is applied
+            _currentConfig = _config.LoadOrDefault();
+            
+            Logger.Log($"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}");
+            Logger.Log($"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}");
+
+            // Re-register refinement hotkey
+            try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
+            _currentMods = _currentConfig.Hotkey.Modifiers;
+            _currentVk = _currentConfig.Hotkey.Key;
+            RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+
+            // Re-register transcriber hotkey if transcriber was enabled/disabled
+            try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
+            _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+            _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+            if (_currentConfig.Transcriber.Enabled)
+            {
+                RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+            }
+
             NotificationService.ShowSuccess("Settings saved.");
         }
     }
