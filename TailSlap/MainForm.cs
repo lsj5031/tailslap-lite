@@ -182,12 +182,12 @@ public class MainForm : Form
 
     private Icon[] LoadAnimationFrames()
     {
+        var list = new System.Collections.Generic.List<Icon>(8);
+        string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
+        int preferredSize = GetOptimalIconSize();
+
         try
         {
-            var list = new System.Collections.Generic.List<Icon>(8);
-            string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
-            int preferredSize = GetOptimalIconSize();
-
             for (int i = 1; i <= 8; i++)
             {
                 var icon = TryLoadPngAsIcon(
@@ -197,14 +197,33 @@ public class MainForm : Form
                 if (icon != null)
                     list.Add(icon);
             }
+        }
+        catch { }
 
-            if (list.Count > 0)
+        if (list.Count > 0)
+        {
+            Logger.Log($"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px");
+            return list.ToArray();
+        }
+
+        try
+        {
+            for (int i = 1; i <= 8; i++)
             {
-                Logger.Log($"Loaded {list.Count} animation frames (PNG) at {preferredSize}px");
-                return list.ToArray();
+                var icon = TryLoadEmbeddedPngAsIcon($"{i}.png", preferredSize);
+                if (icon != null)
+                    list.Add(icon);
             }
         }
         catch { }
+
+        if (list.Count > 0)
+        {
+            Logger.Log(
+                $"Loaded {list.Count} animation frames (PNG) from embedded resources at {preferredSize}px"
+            );
+            return list.ToArray();
+        }
 
         return new[] { _idleIcon };
     }
@@ -241,6 +260,18 @@ public class MainForm : Form
             var bytes = System.IO.File.ReadAllBytes(filePath);
             using var ms = new MemoryStream(bytes);
             using var original = new Bitmap(ms);
+            return CreateIconFromBitmap(original, preferredSize);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Icon? CreateIconFromBitmap(Bitmap original, int preferredSize)
+    {
+        try
+        {
             using var scaled = new Bitmap(
                 preferredSize,
                 preferredSize,
@@ -267,6 +298,72 @@ public class MainForm : Form
             {
                 if (hIcon != IntPtr.Zero)
                     DestroyIcon(hIcon);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Stream? TryOpenEmbeddedIconsResourceStream(string fileName)
+    {
+        try
+        {
+            var assembly = typeof(MainForm).Assembly;
+            string suffix = $".Icons.{fileName}";
+
+            string? assemblyName = assembly.GetName().Name;
+            if (!string.IsNullOrWhiteSpace(assemblyName))
+            {
+                var direct = assembly.GetManifestResourceStream($"{assemblyName}{suffix}");
+                if (direct != null)
+                    return direct;
+            }
+
+            foreach (var resourceName in assembly.GetManifestResourceNames())
+            {
+                if (resourceName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    return assembly.GetManifestResourceStream(resourceName);
+            }
+        }
+        catch { }
+
+        return null;
+    }
+
+    private static Icon? TryLoadEmbeddedPngAsIcon(string fileName, int preferredSize)
+    {
+        try
+        {
+            using var stream = TryOpenEmbeddedIconsResourceStream(fileName);
+            if (stream == null)
+                return null;
+
+            using var original = new Bitmap(stream);
+            return CreateIconFromBitmap(original, preferredSize);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Icon? TryLoadEmbeddedIcoAsIcon(string fileName, int preferredSize)
+    {
+        try
+        {
+            using var stream = TryOpenEmbeddedIconsResourceStream(fileName);
+            if (stream == null)
+                return null;
+
+            try
+            {
+                return new Icon(stream, preferredSize, preferredSize);
+            }
+            catch
+            {
+                return new Icon(stream);
             }
         }
         catch
@@ -418,6 +515,20 @@ public class MainForm : Form
                 Logger.Log($"Loaded idle icon at {preferredSize}px from favicon.ico");
                 return favicon;
             }
+
+            var embeddedFrame1 = TryLoadEmbeddedPngAsIcon("1.png", preferredSize);
+            if (embeddedFrame1 != null)
+            {
+                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded 1.png");
+                return embeddedFrame1;
+            }
+
+            var embeddedFavicon = TryLoadEmbeddedIcoAsIcon("favicon.ico", preferredSize);
+            if (embeddedFavicon != null)
+            {
+                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded favicon.ico");
+                return embeddedFavicon;
+            }
         }
         catch { }
         return SystemIcons.Application;
@@ -445,6 +556,20 @@ public class MainForm : Form
             {
                 Logger.Log($"Loaded main icon at {preferredSize}px from favicon.ico");
                 return favicon;
+            }
+
+            var embeddedFrame1 = TryLoadEmbeddedPngAsIcon("1.png", preferredSize);
+            if (embeddedFrame1 != null)
+            {
+                Logger.Log($"Loaded main icon at {preferredSize}px from embedded 1.png");
+                return embeddedFrame1;
+            }
+
+            var embeddedFavicon = TryLoadEmbeddedIcoAsIcon("favicon.ico", preferredSize);
+            if (embeddedFavicon != null)
+            {
+                Logger.Log($"Loaded main icon at {preferredSize}px from embedded favicon.ico");
+                return embeddedFavicon;
             }
         }
         catch { }

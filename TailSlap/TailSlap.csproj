@@ -11,13 +11,22 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="Icons\*.ico">
+    <!-- Physical copy of icons for external loading (faster, allows hot-swapping) -->
+    <Content Include="Icons\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Visible>true</Visible>
     </Content>
-    <Content Include="Icons\*.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
+    
+    <!-- Embedded resources as fallback -->
+    <EmbeddedResource Include="Icons\1.png" />
+    <EmbeddedResource Include="Icons\2.png" />
+    <EmbeddedResource Include="Icons\3.png" />
+    <EmbeddedResource Include="Icons\4.png" />
+    <EmbeddedResource Include="Icons\5.png" />
+    <EmbeddedResource Include="Icons\6.png" />
+    <EmbeddedResource Include="Icons\7.png" />
+    <EmbeddedResource Include="Icons\8.png" />
+    <EmbeddedResource Include="Icons\favicon.ico" />
   </ItemGroup>
 </Project>
