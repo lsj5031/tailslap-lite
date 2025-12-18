@@ -9,13 +9,14 @@ public sealed class AppConfig
     public bool AutoPaste { get; set; } = true;
     public bool UseClipboardFallback { get; set; } = true;
     public HotkeyConfig Hotkey { get; set; } = new(); // Ctrl+Alt+R for LLM
-    public HotkeyConfig TranscriberHotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
+    public HotkeyConfig TranscriberHotkey { get; set; } =
+        new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
     public LlmConfig Llm { get; set; } = new();
     public TranscriberConfig Transcriber { get; set; } = new();
 }
 
-public sealed class HotkeyConfig 
-{ 
+public sealed class HotkeyConfig
+{
     public uint Modifiers { get; set; } = 0x0003; // ALT + CTRL
     public uint Key { get; set; } = (uint)Keys.R;
 }
@@ -61,7 +62,11 @@ public sealed class TranscriberConfig
 
 public sealed class ConfigService
 {
-    private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap");
+    private static string Dir =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "TailSlap"
+        );
     private static string FilePath => Path.Combine(Dir, "config.json");
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
@@ -69,15 +74,31 @@ public sealed class ConfigService
     {
         try
         {
-            if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
-            if (!File.Exists(FilePath)) { var c = new AppConfig(); Save(c); return c; }
+            if (!Directory.Exists(Dir))
+                Directory.CreateDirectory(Dir);
+            if (!File.Exists(FilePath))
+            {
+                var c = new AppConfig();
+                Save(c);
+                return c;
+            }
             var txt = File.ReadAllText(FilePath);
             return JsonSerializer.Deserialize<AppConfig>(txt, JsonOpts) ?? new AppConfig();
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"Config load failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            try { NotificationService.ShowError("Failed to load configuration. Using defaults instead."); } catch { }
+            try
+            {
+                Logger.Log($"Config load failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
+            try
+            {
+                NotificationService.ShowError(
+                    "Failed to load configuration. Using defaults instead."
+                );
+            }
+            catch { }
             return new AppConfig();
         }
     }
@@ -86,13 +107,24 @@ public sealed class ConfigService
     {
         try
         {
-            if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
+            if (!Directory.Exists(Dir))
+                Directory.CreateDirectory(Dir);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, JsonOpts));
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"Config save failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            try { NotificationService.ShowError("Failed to save configuration. Changes may not persist."); } catch { }
+            try
+            {
+                Logger.Log($"Config save failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
+            try
+            {
+                NotificationService.ShowError(
+                    "Failed to save configuration. Changes may not persist."
+                );
+            }
+            catch { }
         }
     }
 
@@ -100,9 +132,9 @@ public sealed class ConfigService
 
     public static bool IsValidUrl(string url)
     {
-        return !string.IsNullOrWhiteSpace(url) && 
-               Uri.TryCreate(url, UriKind.Absolute, out var uri) && 
-               (uri.Scheme == "http" || uri.Scheme == "https");
+        return !string.IsNullOrWhiteSpace(url)
+            && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && (uri.Scheme == "http" || uri.Scheme == "https");
     }
 
     public static bool IsValidTemperature(double temperature)
@@ -117,8 +149,7 @@ public sealed class ConfigService
 
     public static bool IsValidModelName(string modelName)
     {
-        return !string.IsNullOrWhiteSpace(modelName) && 
-               modelName.Trim().Length > 0;
+        return !string.IsNullOrWhiteSpace(modelName) && modelName.Trim().Length > 0;
     }
 
     public static bool IsValidTimeout(int timeoutSeconds)
@@ -134,39 +165,39 @@ public sealed class ConfigService
     public AppConfig CreateValidatedCopy()
     {
         var cfg = LoadOrDefault();
-        
+
         // Validate and fix common issues
         if (!IsValidUrl(cfg.Llm.BaseUrl))
         {
             cfg.Llm.BaseUrl = "http://localhost:11434/v1";
         }
-        
+
         if (!IsValidTemperature(cfg.Llm.Temperature))
         {
             cfg.Llm.Temperature = 0.2;
         }
-        
+
         if (cfg.Llm.MaxTokens.HasValue && !IsValidMaxTokens(cfg.Llm.MaxTokens.Value))
         {
             cfg.Llm.MaxTokens = null;
         }
-        
+
         if (!IsValidModelName(cfg.Llm.Model))
         {
             cfg.Llm.Model = "llama3.1";
         }
-        
+
         // Validate transcriber settings
         if (!IsValidUrl(cfg.Transcriber.BaseUrl))
         {
             cfg.Transcriber.BaseUrl = "http://localhost:18000/v1/audio/transcriptions";
         }
-        
+
         if (!IsValidModelName(cfg.Transcriber.Model))
         {
             cfg.Transcriber.Model = "glm-nano-2512";
         }
-        
+
         if (!IsValidTimeout(cfg.Transcriber.TimeoutSeconds))
         {
             cfg.Transcriber.TimeoutSeconds = 30;
@@ -176,14 +207,14 @@ public sealed class ConfigService
         {
             cfg.Transcriber.SilenceThresholdMs = 1000;
         }
-        
+
         // Default transcriber hotkey to Ctrl+Alt+T
         if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
         {
             cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
             cfg.TranscriberHotkey.Key = (uint)Keys.OemSemicolon;
         }
-        
+
         return cfg;
     }
 }

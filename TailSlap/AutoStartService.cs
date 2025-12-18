@@ -15,8 +15,18 @@ public static class AutoStartService
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"AutoStart IsEnabled failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            try { NotificationService.ShowWarning("Unable to read startup setting. You may need additional permissions."); } catch { }
+            try
+            {
+                Logger.Log($"AutoStart IsEnabled failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
+            try
+            {
+                NotificationService.ShowWarning(
+                    "Unable to read startup setting. You may need additional permissions."
+                );
+            }
+            catch { }
             return false;
         }
     }
@@ -28,8 +38,18 @@ public static class AutoStartService
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
             if (key == null)
             {
-                try { Logger.Log($"AutoStart Toggle: Run key not found: {RunKeyPath}"); } catch { }
-                try { NotificationService.ShowWarning("Unable to modify startup setting on this system."); } catch { }
+                try
+                {
+                    Logger.Log($"AutoStart Toggle: Run key not found: {RunKeyPath}");
+                }
+                catch { }
+                try
+                {
+                    NotificationService.ShowWarning(
+                        "Unable to modify startup setting on this system."
+                    );
+                }
+                catch { }
                 return;
             }
 
@@ -43,8 +63,18 @@ public static class AutoStartService
                 var path = module?.FileName;
                 if (string.IsNullOrWhiteSpace(path))
                 {
-                    try { Logger.Log("AutoStart Toggle failed: current process path is unavailable."); } catch { }
-                    try { NotificationService.ShowError("Failed to determine application path for startup entry."); } catch { }
+                    try
+                    {
+                        Logger.Log("AutoStart Toggle failed: current process path is unavailable.");
+                    }
+                    catch { }
+                    try
+                    {
+                        NotificationService.ShowError(
+                            "Failed to determine application path for startup entry."
+                        );
+                    }
+                    catch { }
                     return;
                 }
 
@@ -57,8 +87,18 @@ public static class AutoStartService
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"AutoStart Toggle failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            try { NotificationService.ShowError("Failed to update startup setting. Try again or adjust permissions."); } catch { }
+            try
+            {
+                Logger.Log($"AutoStart Toggle failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
+            try
+            {
+                NotificationService.ShowError(
+                    "Failed to update startup setting. Try again or adjust permissions."
+                );
+            }
+            catch { }
         }
     }
 }

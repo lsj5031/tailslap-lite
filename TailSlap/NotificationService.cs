@@ -17,7 +17,7 @@ public static class NotificationService
         Info,
         Success,
         Warning,
-        Error
+        Error,
     }
 
     private sealed class NotificationMessage
@@ -37,13 +37,21 @@ public static class NotificationService
     public static void ShowInfo(string message, string title = "TailSlap")
     {
         // Only log, no balloon tip for info messages
-        try { Logger.Log($"[Info]: {message}"); } catch { }
+        try
+        {
+            Logger.Log($"[Info]: {message}");
+        }
+        catch { }
     }
 
     public static void ShowSuccess(string message, string title = "TailSlap")
     {
         // Only log, no balloon tip for success messages
-        try { Logger.Log($"[Success]: {message}"); } catch { }
+        try
+        {
+            Logger.Log($"[Success]: {message}");
+        }
+        catch { }
     }
 
     public static void ShowWarning(string message, string title = "TailSlap")
@@ -67,15 +75,21 @@ public static class NotificationService
             "Auto-paste failed. Please paste manually (Ctrl+V).",
             "Paste Failed",
             MessageBoxButtons.OKCancel,
-            MessageBoxIcon.Warning);
-        
+            MessageBoxIcon.Warning
+        );
+
         if (result == DialogResult.OK)
         {
             ShowInfo("You can now paste with Ctrl+V");
         }
     }
 
-    private static void EnqueueNotification(string title, string message, NotificationType type, int durationMs)
+    private static void EnqueueNotification(
+        string title,
+        string message,
+        NotificationType type,
+        int durationMs
+    )
     {
         if (_trayIcon == null)
         {
@@ -89,13 +103,13 @@ public static class NotificationService
             Title = title,
             Message = message,
             Type = type,
-            DurationMs = durationMs
+            DurationMs = durationMs,
         };
 
         lock (_lockObject)
         {
             _messageQueue.Enqueue(notification);
-            
+
             // Start processing if not already running (inside the lock to prevent race)
             if (!_isProcessing)
             {
@@ -112,7 +126,7 @@ public static class NotificationService
             while (true)
             {
                 NotificationMessage? notification = null;
-                
+
                 lock (_lockObject)
                 {
                     if (_messageQueue.Count == 0)
@@ -120,7 +134,7 @@ public static class NotificationService
                         _isProcessing = false;
                         return;
                     }
-                    
+
                     notification = _messageQueue.Dequeue();
                 }
 
@@ -135,7 +149,7 @@ public static class NotificationService
                     {
                         ShowNotificationOnUiThread(notification);
                     }
-                    
+
                     // Wait before showing the next notification
                     await Task.Delay(notification.DurationMs + 500).ConfigureAwait(false);
                 }
@@ -143,7 +157,11 @@ public static class NotificationService
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"NotificationService error: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"NotificationService error: {ex.Message}");
+            }
+            catch { }
             lock (_lockObject)
             {
                 _isProcessing = false;
@@ -160,7 +178,7 @@ public static class NotificationService
                 NotificationType.Success => ToolTipIcon.Info,
                 NotificationType.Warning => ToolTipIcon.Warning,
                 NotificationType.Error => ToolTipIcon.Error,
-                _ => ToolTipIcon.Info
+                _ => ToolTipIcon.Info,
             };
 
             // Add additional safety check for tray icon
@@ -176,26 +194,39 @@ public static class NotificationService
                     notification.DurationMs / 1000,
                     notification.Title,
                     notification.Message,
-                    icon);
+                    icon
+                );
             }
             catch (Exception ex)
             {
-                try { Logger.Log($"Balloon tip failed: {ex.Message}"); } catch { }
+                try
+                {
+                    Logger.Log($"Balloon tip failed: {ex.Message}");
+                }
+                catch { }
                 // Fallback to message box if balloon tip fails
                 ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type);
             }
 
             // Also log the notification
-            try 
-            { 
-                Logger.Log($"Notification [{notification.Type}]: {notification.Message}"); 
-            } 
+            try
+            {
+                Logger.Log($"Notification [{notification.Type}]: {notification.Message}");
+            }
             catch { }
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"Failed to show notification: {ex.Message}"); } catch { }
-            try { ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type); } catch { }
+            try
+            {
+                Logger.Log($"Failed to show notification: {ex.Message}");
+            }
+            catch { }
+            try
+            {
+                ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type);
+            }
+            catch { }
         }
     }
 
@@ -208,7 +239,7 @@ public static class NotificationService
                 NotificationType.Error => MessageBoxIcon.Error,
                 NotificationType.Warning => MessageBoxIcon.Warning,
                 NotificationType.Success => MessageBoxIcon.Information,
-                _ => MessageBoxIcon.Information
+                _ => MessageBoxIcon.Information,
             };
 
             MessageBox.Show(message, title, MessageBoxButtons.OK, icon);

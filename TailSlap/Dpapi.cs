@@ -14,7 +14,11 @@ public static class Dpapi
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"DPAPI Protect failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"DPAPI Protect failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
             // Fail gracefully: caller will treat empty result as "no key"
             return string.Empty;
         }
@@ -30,7 +34,11 @@ public static class Dpapi
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"DPAPI Unprotect failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"DPAPI Unprotect failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
             // Fail gracefully: caller will see an empty API key and simply not send auth
             return string.Empty;
         }

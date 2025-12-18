@@ -13,7 +13,7 @@ public enum TranscriberErrorType
     HttpError,
     ParseError,
     FormatError,
-    Unknown
+    Unknown,
 }
 
 public class TranscriberException : Exception
@@ -27,7 +27,9 @@ public class TranscriberException : Exception
         string message,
         Exception? innerException = null,
         int? statusCode = null,
-        string? responseText = null) : base(message, innerException)
+        string? responseText = null
+    )
+        : base(message, innerException)
     {
         ErrorType = errorType;
         StatusCode = statusCode;
@@ -36,8 +38,8 @@ public class TranscriberException : Exception
 
     public bool IsRetryable()
     {
-        return ErrorType == TranscriberErrorType.NetworkTimeout ||
-               ErrorType == TranscriberErrorType.ConnectionFailed;
+        return ErrorType == TranscriberErrorType.NetworkTimeout
+            || ErrorType == TranscriberErrorType.ConnectionFailed;
     }
 }
 
@@ -50,15 +52,13 @@ public sealed class RemoteTranscriber : IDisposable
     public RemoteTranscriber(TranscriberConfig config)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds)
-        };
+        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds) };
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
+        if (_disposed)
+            return;
         _httpClient?.Dispose();
         _disposed = true;
     }
@@ -70,34 +70,42 @@ public sealed class RemoteTranscriber : IDisposable
             // Create a short silence WAV file for testing
             var silenceWav = CreateSilenceWavBytes(durationSeconds: 0.6f);
             var audioContent = new ByteArrayContent(silenceWav);
-            audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav");
+            audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                "audio/wav"
+            );
 
             var formData = new MultipartFormDataContent();
             formData.Add(audioContent, "file", "connection_test.wav");
-            
+
             if (!string.IsNullOrEmpty(_config.Model))
             {
                 formData.Add(new StringContent(_config.Model), "model");
             }
 
             // Create request and add Authorization header (must be on HttpRequestMessage, not content)
-            var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl) { Content = formData };
+            var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+            {
+                Content = formData,
+            };
             if (!string.IsNullOrEmpty(_config.ApiKey))
             {
                 request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
             }
 
             var response = await _httpClient.SendAsync(request);
-            
+
             var responseText = await response.Content.ReadAsStringAsync();
-            
+
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
             {
                 throw new TranscriberException(
                     TranscriberErrorType.HttpError,
                     $"Remote API returned error (HTTP {(int)response.StatusCode})",
                     statusCode: (int)response.StatusCode,
-                    responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                    responseText: responseText.Length > 500
+                        ? responseText.Substring(0, 500)
+                        : responseText
+                );
             }
             try
             {
@@ -110,7 +118,10 @@ public sealed class RemoteTranscriber : IDisposable
                     TranscriberErrorType.ParseError,
                     "Remote API returned invalid JSON",
                     e,
-                    responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                    responseText: responseText.Length > 500
+                        ? responseText.Substring(0, 500)
+                        : responseText
+                );
             }
         }
         catch (TranscriberException)
@@ -122,14 +133,16 @@ public sealed class RemoteTranscriber : IDisposable
             throw new TranscriberException(
                 TranscriberErrorType.NetworkTimeout,
                 $"Remote API request timed out after {_config.TimeoutSeconds}s",
-                e);
+                e
+            );
         }
         catch (HttpRequestException e)
         {
             throw new TranscriberException(
                 TranscriberErrorType.ConnectionFailed,
                 "Failed to connect to remote API",
-                e);
+                e
+            );
         }
         catch (Exception e)
         {
@@ -137,7 +150,8 @@ public sealed class RemoteTranscriber : IDisposable
             throw new TranscriberException(
                 TranscriberErrorType.Unknown,
                 $"Unexpected error during remote connection test: {e.Message}",
-                e);
+                e
+            );
         }
     }
 
@@ -163,11 +177,13 @@ public sealed class RemoteTranscriber : IDisposable
                 var audioBytes = await File.ReadAllBytesAsync(audioFilePath);
                 Logger.Log($"Read {audioBytes.Length} bytes from audio file");
                 var audioContent = new ByteArrayContent(audioBytes);
-                audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav");
+                audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                    "audio/wav"
+                );
 
                 var formData = new MultipartFormDataContent();
                 formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
-                
+
                 if (!string.IsNullOrEmpty(_config.Model))
                 {
                     formData.Add(new StringContent(_config.Model), "model");
@@ -175,21 +191,28 @@ public sealed class RemoteTranscriber : IDisposable
                 }
 
                 Logger.Log($"Posting to {_config.BaseUrl}");
-                
+
                 // Create request and add Authorization header (must be on HttpRequestMessage, not content)
-                var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl) { Content = formData };
+                var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+                {
+                    Content = formData,
+                };
                 if (!string.IsNullOrEmpty(_config.ApiKey))
                 {
                     request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
                     Logger.Log("Added Authorization header");
                 }
-                
+
                 var response = await _httpClient.SendAsync(request);
-                
-                Logger.Log($"Received response: HTTP {(int)response.StatusCode} {response.StatusCode}");
+
+                Logger.Log(
+                    $"Received response: HTTP {(int)response.StatusCode} {response.StatusCode}"
+                );
                 var responseText = await response.Content.ReadAsStringAsync();
-                Logger.Log($"Response body length: {responseText.Length}, content: {responseText.Substring(0, Math.Min(500, responseText.Length))}");
-                
+                Logger.Log(
+                    $"Response body length: {responseText.Length}, content: {responseText.Substring(0, Math.Min(500, responseText.Length))}"
+                );
+
                 if (response.StatusCode != System.Net.HttpStatusCode.OK)
                 {
                     Logger.Log($"Error response: {responseText}");
@@ -197,7 +220,10 @@ public sealed class RemoteTranscriber : IDisposable
                         TranscriberErrorType.HttpError,
                         $"Remote API returned error (HTTP {(int)response.StatusCode})",
                         statusCode: (int)response.StatusCode,
-                        responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                        responseText: responseText.Length > 500
+                            ? responseText.Substring(0, 500)
+                            : responseText
+                    );
                 }
 
                 try
@@ -206,7 +232,9 @@ public sealed class RemoteTranscriber : IDisposable
                     var payload = JsonDocument.Parse(responseText);
                     Logger.Log("JSON parsed successfully");
                     var text = ExtractTextFromResponse(payload.RootElement);
-                    Logger.Log($"Extracted text from response: {text.Substring(0, Math.Min(100, text.Length))}");
+                    Logger.Log(
+                        $"Extracted text from response: {text.Substring(0, Math.Min(100, text.Length))}"
+                    );
                     return text;
                 }
                 catch (JsonException e)
@@ -216,14 +244,23 @@ public sealed class RemoteTranscriber : IDisposable
                         TranscriberErrorType.ParseError,
                         "Remote API returned invalid JSON",
                         e,
-                        responseText: responseText.Length > 500 ? responseText.Substring(0, 500) : responseText);
+                        responseText: responseText.Length > 500
+                            ? responseText.Substring(0, 500)
+                            : responseText
+                    );
                 }
             }
             catch (TranscriberException ex)
             {
                 if (ex.IsRetryable() && attempts > 0)
                 {
-                    try { Logger.Log($"Transcription failed with retryable error: {ex.Message}; retrying in 1s"); } catch { }
+                    try
+                    {
+                        Logger.Log(
+                            $"Transcription failed with retryable error: {ex.Message}; retrying in 1s"
+                        );
+                    }
+                    catch { }
                     await Task.Delay(1000);
                     continue;
                 }
@@ -234,10 +271,15 @@ public sealed class RemoteTranscriber : IDisposable
                 var ex = new TranscriberException(
                     TranscriberErrorType.NetworkTimeout,
                     $"Remote API request timed out after {_config.TimeoutSeconds}s",
-                    e);
+                    e
+                );
                 if (attempts > 0)
                 {
-                    try { Logger.Log($"Transcription timeout; retrying in 1s"); } catch { }
+                    try
+                    {
+                        Logger.Log($"Transcription timeout; retrying in 1s");
+                    }
+                    catch { }
                     await Task.Delay(1000);
                     continue;
                 }
@@ -248,10 +290,15 @@ public sealed class RemoteTranscriber : IDisposable
                 var ex = new TranscriberException(
                     TranscriberErrorType.ConnectionFailed,
                     "Failed to connect to remote API",
-                    e);
+                    e
+                );
                 if (attempts > 0)
                 {
-                    try { Logger.Log($"Transcription connection failed; retrying in 1s"); } catch { }
+                    try
+                    {
+                        Logger.Log($"Transcription connection failed; retrying in 1s");
+                    }
+                    catch { }
                     await Task.Delay(1000);
                     continue;
                 }
@@ -259,17 +306,21 @@ public sealed class RemoteTranscriber : IDisposable
             }
             catch (Exception e)
             {
-                Logger.Log($"TranscribeAudioAsync unexpected error: {e.GetType().Name}: {e.Message}");
+                Logger.Log(
+                    $"TranscribeAudioAsync unexpected error: {e.GetType().Name}: {e.Message}"
+                );
                 throw new TranscriberException(
                     TranscriberErrorType.Unknown,
                     $"Unexpected error during remote transcription: {e.Message}",
-                    e);
+                    e
+                );
             }
         }
-        
+
         throw new TranscriberException(
             TranscriberErrorType.Unknown,
-            "Transcription failed after multiple retries");
+            "Transcription failed after multiple retries"
+        );
     }
 
     private static string ExtractTextFromResponse(JsonElement response)
@@ -277,14 +328,20 @@ public sealed class RemoteTranscriber : IDisposable
         // Try common top-level keys
         foreach (var key in new[] { "text", "transcription", "result", "content" })
         {
-            if (response.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
+            if (
+                response.TryGetProperty(key, out var textElement)
+                && textElement.ValueKind == JsonValueKind.String
+            )
             {
                 return textElement.GetString() ?? "";
             }
         }
 
         // Try choices array (OpenAI format)
-        if (response.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array)
+        if (
+            response.TryGetProperty("choices", out var choices)
+            && choices.ValueKind == JsonValueKind.Array
+        )
         {
             var choicesArray = choices.EnumerateArray();
             if (choicesArray.MoveNext() && choicesArray.Current.ValueKind == JsonValueKind.Object)
@@ -293,15 +350,24 @@ public sealed class RemoteTranscriber : IDisposable
                 // Try text directly in choice
                 foreach (var key in new[] { "text", "transcription", "content" })
                 {
-                    if (firstChoice.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
+                    if (
+                        firstChoice.TryGetProperty(key, out var textElement)
+                        && textElement.ValueKind == JsonValueKind.String
+                    )
                     {
                         return textElement.GetString() ?? "";
                     }
                 }
                 // Try message.content (OpenAI format)
-                if (firstChoice.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object)
+                if (
+                    firstChoice.TryGetProperty("message", out var msg)
+                    && msg.ValueKind == JsonValueKind.Object
+                )
                 {
-                    if (msg.TryGetProperty("content", out var msgContent) && msgContent.ValueKind == JsonValueKind.String)
+                    if (
+                        msg.TryGetProperty("content", out var msgContent)
+                        && msgContent.ValueKind == JsonValueKind.String
+                    )
                     {
                         return msgContent.GetString() ?? "";
                     }
@@ -310,7 +376,10 @@ public sealed class RemoteTranscriber : IDisposable
         }
 
         // Try results array
-        if (response.TryGetProperty("results", out var results) && results.ValueKind == JsonValueKind.Array)
+        if (
+            response.TryGetProperty("results", out var results)
+            && results.ValueKind == JsonValueKind.Array
+        )
         {
             var resultsArray = results.EnumerateArray();
             if (resultsArray.MoveNext() && resultsArray.Current.ValueKind == JsonValueKind.Object)
@@ -318,13 +387,19 @@ public sealed class RemoteTranscriber : IDisposable
                 var firstResult = resultsArray.Current;
                 foreach (var key in new[] { "text", "transcription", "content" })
                 {
-                    if (firstResult.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
+                    if (
+                        firstResult.TryGetProperty(key, out var textElement)
+                        && textElement.ValueKind == JsonValueKind.String
+                    )
                     {
                         return textElement.GetString() ?? "";
                     }
                 }
             }
-            else if (resultsArray.MoveNext() && resultsArray.Current.ValueKind == JsonValueKind.String)
+            else if (
+                resultsArray.MoveNext()
+                && resultsArray.Current.ValueKind == JsonValueKind.String
+            )
             {
                 return resultsArray.Current.GetString() ?? "";
             }
@@ -335,37 +410,53 @@ public sealed class RemoteTranscriber : IDisposable
         {
             foreach (var key in new[] { "text", "transcription", "result", "content" })
             {
-                if (data.TryGetProperty(key, out var textElement) && textElement.ValueKind == JsonValueKind.String)
+                if (
+                    data.TryGetProperty(key, out var textElement)
+                    && textElement.ValueKind == JsonValueKind.String
+                )
                 {
                     return textElement.GetString() ?? "";
                 }
             }
             // Try nested structure in data
-            if (data.TryGetProperty("text", out var dataText) && dataText.ValueKind == JsonValueKind.Object)
+            if (
+                data.TryGetProperty("text", out var dataText)
+                && dataText.ValueKind == JsonValueKind.Object
+            )
             {
-                if (dataText.TryGetProperty("content", out var textContent) && textContent.ValueKind == JsonValueKind.String)
+                if (
+                    dataText.TryGetProperty("content", out var textContent)
+                    && textContent.ValueKind == JsonValueKind.String
+                )
                 {
                     return textContent.GetString() ?? "";
                 }
             }
         }
 
-        try { Logger.Log($"ExtractTextFromResponse: Could not find text in response structure: {response.ToString()[..Math.Min(500, response.ToString().Length)]}"); } catch { }
-        
+        try
+        {
+            Logger.Log(
+                $"ExtractTextFromResponse: Could not find text in response structure: {response.ToString()[..Math.Min(500, response.ToString().Length)]}"
+            );
+        }
+        catch { }
+
         throw new TranscriberException(
             TranscriberErrorType.ParseError,
             "API response does not contain transcription text in any recognized format",
-            responseText: response.ToString());
+            responseText: response.ToString()
+        );
     }
 
     private static byte[] CreateSilenceWavBytes(float durationSeconds)
     {
         const int sampleRate = 16000;
         int frameCount = Math.Max(1, (int)(durationSeconds * sampleRate));
-        
+
         using var memoryStream = new MemoryStream();
         using var writer = new BinaryWriter(memoryStream);
-        
+
         // WAV file header
         writer.Write(Encoding.ASCII.GetBytes("RIFF"));
         writer.Write(36 + frameCount * 2); // File size - 8
@@ -380,13 +471,13 @@ public sealed class RemoteTranscriber : IDisposable
         writer.Write((short)16); // BitsPerSample
         writer.Write(Encoding.ASCII.GetBytes("data"));
         writer.Write(frameCount * 2); // Subchunk2Size (NumSamples * NumChannels * BitsPerSample/8)
-        
+
         // Write silence frames
         for (int i = 0; i < frameCount; i++)
         {
             writer.Write((short)0);
         }
-        
+
         return memoryStream.ToArray();
     }
 }

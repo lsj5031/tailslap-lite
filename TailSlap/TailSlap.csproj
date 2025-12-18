@@ -16,5 +16,4 @@
     </Content>
     <EmbeddedResource Include="Icons\*.ico" />
   </ItemGroup>
-  
 </Project>

@@ -6,8 +6,13 @@ using System.Threading.Tasks;
 
 public static class Logger
 {
-    private static string LogPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log");
-    
+    private static string LogPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "TailSlap",
+            "app.log"
+        );
+
     private static readonly ConcurrentQueue<string> LogQueue = new();
     private static readonly SemaphoreSlim WriterSignal = new(0);
     private static readonly Task WriterTask;
@@ -47,7 +52,7 @@ public static class Logger
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-                    
+
                     while (LogQueue.TryDequeue(out var line) && itemsWritten < 100)
                     {
                         try

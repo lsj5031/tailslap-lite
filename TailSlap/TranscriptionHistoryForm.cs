@@ -17,27 +17,87 @@ public sealed class TranscriptionHistoryForm : Form
     {
         Text = "Encrypted Transcription History";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = 900; Height = 550;
+        Width = 900;
+        Height = 550;
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
 
-        _list = new ListBox { Dock = DockStyle.Top, HorizontalScrollbar = true, Height = 200 };
-        _textBox = new TextBox { Multiline = true, Dock = DockStyle.Fill, ReadOnly = true, BackColor = SystemColors.Window, ScrollBars = ScrollBars.Both };
+        _list = new ListBox
+        {
+            Dock = DockStyle.Top,
+            HorizontalScrollbar = true,
+            Height = 200,
+        };
+        _textBox = new TextBox
+        {
+            Multiline = true,
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            BackColor = SystemColors.Window,
+            ScrollBars = ScrollBars.Both,
+        };
 
-        _statusLabel = new Label { Dock = DockStyle.Bottom, Height = 20, Text = "Status: Ready", ForeColor = Color.DarkGray, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
-        
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        var copy = new Button { Text = "Copy Text", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        _refreshButton = new Button { Text = "Refresh (F5)", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        var clear = new Button { Text = "Clear History", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        _statusLabel = new Label
+        {
+            Dock = DockStyle.Bottom,
+            Height = 20,
+            Text = "Status: Ready",
+            ForeColor = Color.DarkGray,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(5, 0, 0, 0),
+        };
 
-        copy.Click += (_, __) => { try { Clipboard.SetText(_textBox.Text); NotificationService.ShowSuccess("Transcription copied to clipboard."); } catch { NotificationService.ShowError("Failed to copy text."); } };
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            FlowDirection = FlowDirection.RightToLeft,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        var copy = new Button
+        {
+            Text = "Copy Text",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _refreshButton = new Button
+        {
+            Text = "Refresh (F5)",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        var clear = new Button
+        {
+            Text = "Clear History",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+
+        copy.Click += (_, __) =>
+        {
+            try
+            {
+                Clipboard.SetText(_textBox.Text);
+                NotificationService.ShowSuccess("Transcription copied to clipboard.");
+            }
+            catch
+            {
+                NotificationService.ShowError("Failed to copy text.");
+            }
+        };
         _refreshButton.Click += (_, __) => RefreshHistory(true);
         clear.Click += (_, __) =>
         {
             try
             {
-                if (MessageBox.Show("Are you sure you want to delete all encrypted transcription history? This action is irreversible.", "Confirm Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                if (
+                    MessageBox.Show(
+                        "Are you sure you want to delete all encrypted transcription history? This action is irreversible.",
+                        "Confirm Delete",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning
+                    ) == DialogResult.Yes
+                )
                 {
                     HistoryService.ClearAll();
                     SafePopulate();
@@ -46,21 +106,38 @@ public sealed class TranscriptionHistoryForm : Form
             }
             catch (Exception ex)
             {
-                try { Logger.Log($"Clear encrypted history failed: {ex.Message}"); } catch { }
+                try
+                {
+                    Logger.Log($"Clear encrypted history failed: {ex.Message}");
+                }
+                catch { }
                 NotificationService.ShowError("Failed to clear encrypted history.");
             }
         };
 
         buttons.Controls.AddRange(new Control[] { copy, _refreshButton, clear });
-        
+
         Controls.AddRange(new Control[] { _statusLabel, buttons, _textBox, _list });
 
-        Load += (_, __) => { SafePopulate(); _lastRefresh = DateTime.Now; InitializeRefreshTimer(); };
+        Load += (_, __) =>
+        {
+            SafePopulate();
+            _lastRefresh = DateTime.Now;
+            InitializeRefreshTimer();
+        };
         _list.SelectedIndexChanged += (_, __) => SafeShowSelected();
 
-        Activated += (_, __) => { if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(2)) SafePopulate(); };
+        Activated += (_, __) =>
+        {
+            if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(2))
+                SafePopulate();
+        };
         KeyPreview = true;
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.F5) RefreshHistory(true); };
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.F5)
+                RefreshHistory(true);
+        };
     }
 
     private void InitializeRefreshTimer()
@@ -78,7 +155,11 @@ public sealed class TranscriptionHistoryForm : Form
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"Encrypted transcription populate failed: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"Encrypted transcription populate failed: {ex.Message}");
+            }
+            catch { }
             _statusLabel.Text = "Status: Error populating list";
             _statusLabel.ForeColor = Color.Red;
         }
@@ -89,12 +170,12 @@ public sealed class TranscriptionHistoryForm : Form
         var items = HistoryService.ReadAllTranscriptions();
         _list.BeginUpdate();
         _list.Items.Clear();
-        
+
         int corruptedCount = 0;
         foreach (var (timestamp, text, duration) in items)
         {
             string preview = Preview(text);
-            
+
             // Detect corrupted/encrypted entries
             if (string.IsNullOrEmpty(text))
             {
@@ -110,7 +191,8 @@ public sealed class TranscriptionHistoryForm : Form
 
         if (corruptedCount > 0)
         {
-            _statusLabel.Text = $"Status: {items.Count} total entries - {corruptedCount} corrupted (encrypted) entries detected";
+            _statusLabel.Text =
+                $"Status: {items.Count} total entries - {corruptedCount} corrupted (encrypted) entries detected";
             _statusLabel.ForeColor = Color.Orange;
         }
         else
@@ -119,12 +201,14 @@ public sealed class TranscriptionHistoryForm : Form
             _statusLabel.ForeColor = Color.DarkGray;
         }
 
-        if (_list.Items.Count > 0) _list.SelectedIndex = _list.Items.Count - 1;
+        if (_list.Items.Count > 0)
+            _list.SelectedIndex = _list.Items.Count - 1;
     }
 
     private string Preview(string s)
     {
-        if (string.IsNullOrEmpty(s)) return "(empty)";
+        if (string.IsNullOrEmpty(s))
+            return "(empty)";
         s = s.Replace('\n', ' ').Replace('\r', ' ');
         s = s.Replace("  ", " ");
         s = s.Trim();
@@ -137,10 +221,11 @@ public sealed class TranscriptionHistoryForm : Form
         {
             var items = HistoryService.ReadAllTranscriptions();
             int idx = _list.SelectedIndex;
-            if (idx < 0 || idx >= items.Count) return;
-            
+            if (idx < 0 || idx >= items.Count)
+                return;
+
             var (timestamp, text, duration) = items[idx];
-            
+
             // Replace NBSP with regular spaces for readability
             var cleanText = (text ?? "").Replace('\u00A0', ' ');
             var sb = new StringBuilder();
@@ -149,9 +234,9 @@ public sealed class TranscriptionHistoryForm : Form
             sb.AppendLine(new string('-', 50));
             sb.AppendLine();
             sb.AppendLine(cleanText);
-            
+
             _textBox.Text = sb.ToString();
-            
+
             if (string.IsNullOrEmpty(text))
             {
                 _statusLabel.Text = "Status: Corrupted entry - decryption may have failed";
@@ -165,7 +250,11 @@ public sealed class TranscriptionHistoryForm : Form
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"Show encrypted transcription selected failed: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"Show encrypted transcription selected failed: {ex.Message}");
+            }
+            catch { }
             _statusLabel.Text = $"Status: Error showing entry - {ex.Message}";
             _statusLabel.ForeColor = Color.Red;
         }
@@ -183,7 +272,11 @@ public sealed class TranscriptionHistoryForm : Form
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"Encrypted transcription check for new failed: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"Encrypted transcription check for new failed: {ex.Message}");
+            }
+            catch { }
             _statusLabel.Text = $"Status: Error checking updates - {ex.Message}";
             _statusLabel.ForeColor = Color.Red;
         }
@@ -193,9 +286,9 @@ public sealed class TranscriptionHistoryForm : Form
     {
         try
         {
-            if (userInitiated) 
-            { 
-                SafePopulate(); 
+            if (userInitiated)
+            {
+                SafePopulate();
                 _statusLabel.Text = $"Status: Refreshed at {DateTime.Now:HH:mm:ss}";
                 _statusLabel.ForeColor = Color.DarkGray;
             }
@@ -206,7 +299,11 @@ public sealed class TranscriptionHistoryForm : Form
         {
             _statusLabel.Text = $"Status: Error refreshing - {ex.Message}";
             _statusLabel.ForeColor = Color.Red;
-            try { Logger.Log($"Encrypted transcription refresh failed: {ex.Message}"); } catch { }
+            try
+            {
+                Logger.Log($"Encrypted transcription refresh failed: {ex.Message}");
+            }
+            catch { }
             NotificationService.ShowError("Failed to refresh encrypted transcription history.");
         }
     }
