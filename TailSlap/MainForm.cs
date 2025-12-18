@@ -409,7 +409,10 @@ public class MainForm : Form
                 return frame1;
             }
 
-            var favicon = TryLoadIco(System.IO.Path.Combine(iconsDir, "favicon.ico"), preferredSize);
+            var favicon = TryLoadIco(
+                System.IO.Path.Combine(iconsDir, "favicon.ico"),
+                preferredSize
+            );
             if (favicon != null)
             {
                 Logger.Log($"Loaded idle icon at {preferredSize}px from favicon.ico");
@@ -434,7 +437,10 @@ public class MainForm : Form
                 return frame1;
             }
 
-            var favicon = TryLoadIco(System.IO.Path.Combine(iconsDir, "favicon.ico"), preferredSize);
+            var favicon = TryLoadIco(
+                System.IO.Path.Combine(iconsDir, "favicon.ico"),
+                preferredSize
+            );
             if (favicon != null)
             {
                 Logger.Log($"Loaded main icon at {preferredSize}px from favicon.ico");
