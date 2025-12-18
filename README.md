@@ -1,7 +1,7 @@
 # TailSlap
 
 <div align="center">
-  <img src="TailSlap/Icons/TailSlap.ico" alt="TailSlap Logo" width="128" height="128">
+  <img src="TailSlap/Icons/icon.png" alt="TailSlap Logo" width="128" height="128">
   
   **A Windows utility that enhances your clipboard and text refinement experience with AI-powered processing.**
   
@@ -72,7 +72,7 @@ TailSlap uses a cute animated icon that cycles through different "chewing" frame
 
 | Idle | Processing 1 | Processing 2 | Processing 3 | Processing 4 |
 |------|--------------|--------------|--------------|--------------|
-| ![Idle](TailSlap/Icons/TailSlap.ico) | ![Chew1](TailSlap/Icons/Chewing1.ico) | ![Chew2](TailSlap/Icons/Chewing2.ico) | ![Chew3](TailSlap/Icons/Chewing3.ico) | ![Chew4](TailSlap/Icons/Chewing4.ico) |
+| ![Idle](TailSlap/Icons/1.png) | ![Frame2](TailSlap/Icons/2.png) | ![Frame3](TailSlap/Icons/3.png) | ![Frame4](TailSlap/Icons/4.png) | ![Frame5](TailSlap/Icons/5.png) |
 
 The animation plays with pulsing text ("TailSlap - Processing...") during LLM requests to give you visual feedback.
 

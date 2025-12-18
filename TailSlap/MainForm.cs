@@ -17,6 +17,11 @@ public class MainForm : Form
     private int _frame = 0;
     private Icon[] _frames;
     private Icon _idleIcon;
+    private long _lastPulseUpdateMs;
+    private int _pulseDots;
+    private const int AnimationIntervalMs = 75;
+    private const int TooltipPulseIntervalMs = 300;
+    private const int TooltipPulseMaxDots = 3;
     private const int WM_HOTKEY = 0x0312;
     private const int REFINEMENT_HOTKEY_ID = 1;
     private const int TRANSCRIBER_HOTKEY_ID = 2;
@@ -34,6 +39,10 @@ public class MainForm : Form
 
     public MainForm()
     {
+        SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
+        DoubleBuffered = true;
+        UpdateStyles();
+
         ShowInTaskbar = false;
         WindowState = FormWindowState.Minimized;
         Visible = false;
@@ -123,7 +132,7 @@ public class MainForm : Form
         );
 
         _idleIcon = LoadIdleIcon();
-        _frames = LoadChewingFramesOrFallback(); // Icons are preloaded here to avoid per-frame allocations during animation
+        _frames = LoadAnimationFrames(); // Icons are preloaded here to avoid per-frame allocations during animation
 
         _tray = new NotifyIcon
         {
@@ -136,19 +145,18 @@ public class MainForm : Form
         // Initialize notification service
         NotificationService.Initialize(_tray);
 
-        _animTimer = new System.Windows.Forms.Timer { Interval = 100 }; // Faster animation for better visibility
+        _animTimer = new System.Windows.Forms.Timer { Interval = AnimationIntervalMs };
         _animTimer.Tick += (_, __) =>
         {
             try
             {
+                if (_frames.Length == 0)
+                    return;
+
                 int currentFrame = _frame % _frames.Length;
                 _tray.Icon = _frames[currentFrame];
                 _frame++;
-                // Add subtle pulsing effect during animation
-                if (_frame % 4 == 0)
-                    _tray.Text = "TailSlap - Processing...";
-                else
-                    _tray.Text = "TailSlap";
+                PulseProcessingTrayText();
             }
             catch (Exception ex)
             {
@@ -172,83 +180,219 @@ public class MainForm : Form
         );
     }
 
-    private Icon[] LoadChewingFramesOrFallback()
+    private Icon[] LoadAnimationFrames()
     {
         try
         {
-            var list = new System.Collections.Generic.List<Icon>(4);
-            string baseDir = Application.StartupPath;
-            string iconsDir = System.IO.Path.Combine(baseDir, "Icons");
-
-            // Determine optimal icon size based on DPI
+            var list = new System.Collections.Generic.List<Icon>(8);
+            string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
             int preferredSize = GetOptimalIconSize();
 
-            for (int i = 1; i <= 4; i++)
+            for (int i = 1; i <= 8; i++)
             {
-                // Try to load enhanced icons first, then fallback to standard
-                string[] iconPaths =
-                {
-                    System.IO.Path.Combine(iconsDir, $"Chewing{i}_enhanced.ico"),
-                    System.IO.Path.Combine(iconsDir, $"Chewing{i}.ico"),
-                    System.IO.Path.Combine(iconsDir, $"chewing{i}.ico"),
-                };
-
-                foreach (string p in iconPaths)
-                {
-                    if (System.IO.File.Exists(p))
-                    {
-                        try
-                        {
-                            var icon = new Icon(p, preferredSize, preferredSize);
-                            list.Add(icon);
-                            break; // Use first available for this frame
-                        }
-                        catch
-                        {
-                            try
-                            {
-                                list.Add(new Icon(p));
-                            }
-                            catch { }
-                        }
-                    }
-                }
-
-                // Try loading from embedded resources if file not found
-                if (list.Count < i)
-                {
-                    var icon = LoadIconFromResources($"TailSlap.Icons.Chewing{i}.ico");
-                    if (icon != null)
-                        list.Add(icon);
-                }
+                var icon = TryLoadPngAsIcon(
+                    System.IO.Path.Combine(iconsDir, $"{i}.png"),
+                    preferredSize
+                );
+                if (icon != null)
+                    list.Add(icon);
             }
 
             if (list.Count > 0)
             {
-                Logger.Log($"Loaded {list.Count} animation frames at {preferredSize}px");
+                Logger.Log($"Loaded {list.Count} animation frames (PNG) at {preferredSize}px");
                 return list.ToArray();
             }
         }
         catch { }
-        // Fallback to idle icon to ensure at least one frame exists
+
         return new[] { _idleIcon };
     }
 
-    private static Icon? LoadIconFromResources(string resourceName)
+    private static Icon? TryLoadIco(string filePath, int preferredSize)
     {
         try
         {
-            var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-            using (var stream = assembly.GetManifestResourceStream(resourceName))
+            if (!System.IO.File.Exists(filePath))
+                return null;
+
+            try
             {
-                if (stream != null)
-                {
-                    return new Icon(stream);
-                }
+                return new Icon(filePath, preferredSize, preferredSize);
+            }
+            catch
+            {
+                return new Icon(filePath);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Icon? TryLoadPngAsIcon(string filePath, int preferredSize)
+    {
+        try
+        {
+            if (!System.IO.File.Exists(filePath))
+                return null;
+
+            var bytes = System.IO.File.ReadAllBytes(filePath);
+            using var ms = new MemoryStream(bytes);
+            using var original = new Bitmap(ms);
+            using var scaled = new Bitmap(
+                preferredSize,
+                preferredSize,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb
+            );
+            using (var g = Graphics.FromImage(scaled))
+            {
+                g.Clear(Color.Transparent);
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                g.DrawImage(original, new Rectangle(0, 0, preferredSize, preferredSize));
+            }
+
+            MakeEdgeBackgroundTransparent(scaled, tolerance: 40);
+
+            IntPtr hIcon = scaled.GetHicon();
+            try
+            {
+                using var tempIcon = Icon.FromHandle(hIcon);
+                return (Icon)tempIcon.Clone();
+            }
+            finally
+            {
+                if (hIcon != IntPtr.Zero)
+                    DestroyIcon(hIcon);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void MakeEdgeBackgroundTransparent(Bitmap bitmap, int tolerance)
+    {
+        try
+        {
+            int w = bitmap.Width;
+            int h = bitmap.Height;
+            if (w <= 0 || h <= 0)
+                return;
+
+            var bg = GetLikelyBackgroundColor(bitmap);
+
+            var visited = new bool[w * h];
+            var q = new System.Collections.Generic.Queue<Point>(w + h);
+
+            void Enqueue(int x, int y)
+            {
+                int idx = (y * w) + x;
+                if (visited[idx])
+                    return;
+                visited[idx] = true;
+                q.Enqueue(new Point(x, y));
+            }
+
+            for (int x = 0; x < w; x++)
+            {
+                Enqueue(x, 0);
+                if (h > 1)
+                    Enqueue(x, h - 1);
+            }
+            for (int y = 1; y < h - 1; y++)
+            {
+                Enqueue(0, y);
+                if (w > 1)
+                    Enqueue(w - 1, y);
+            }
+
+            while (q.Count > 0)
+            {
+                var p = q.Dequeue();
+                var c = bitmap.GetPixel(p.X, p.Y);
+
+                if (!IsSimilarColor(c, bg, tolerance))
+                    continue;
+
+                if (c.A != 0)
+                    bitmap.SetPixel(p.X, p.Y, Color.FromArgb(0, c.R, c.G, c.B));
+
+                int x = p.X;
+                int y = p.Y;
+                if (x > 0)
+                    Enqueue(x - 1, y);
+                if (x < w - 1)
+                    Enqueue(x + 1, y);
+                if (y > 0)
+                    Enqueue(x, y - 1);
+                if (y < h - 1)
+                    Enqueue(x, y + 1);
             }
         }
         catch { }
-        return null;
+    }
+
+    private static Color GetLikelyBackgroundColor(Bitmap bitmap)
+    {
+        int w = bitmap.Width;
+        int h = bitmap.Height;
+        if (w <= 0 || h <= 0)
+            return Color.White;
+
+        var c1 = bitmap.GetPixel(0, 0);
+        var c2 = bitmap.GetPixel(w - 1, 0);
+        var c3 = bitmap.GetPixel(0, h - 1);
+        var c4 = bitmap.GetPixel(w - 1, h - 1);
+
+        var best = c1;
+        int bestScore = best.R + best.G + best.B;
+
+        int s2 = c2.R + c2.G + c2.B;
+        if (s2 > bestScore)
+        {
+            best = c2;
+            bestScore = s2;
+        }
+
+        int s3 = c3.R + c3.G + c3.B;
+        if (s3 > bestScore)
+        {
+            best = c3;
+            bestScore = s3;
+        }
+
+        int s4 = c4.R + c4.G + c4.B;
+        if (s4 > bestScore)
+        {
+            best = c4;
+        }
+
+        return best;
+    }
+
+    private static bool IsSimilarColor(Color a, Color b, int tolerance)
+    {
+        int dr = a.R - b.R;
+        if (dr < 0)
+            dr = -dr;
+        if (dr > tolerance)
+            return false;
+
+        int dg = a.G - b.G;
+        if (dg < 0)
+            dg = -dg;
+        if (dg > tolerance)
+            return false;
+
+        int db = a.B - b.B;
+        if (db < 0)
+            db = -db;
+        return db <= tolerance;
     }
 
     private Icon LoadIdleIcon()
@@ -258,41 +402,18 @@ public class MainForm : Form
             string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
             int preferredSize = GetOptimalIconSize();
 
-            // Try enhanced icons first, then standard icons
-            string[] iconPaths =
+            var frame1 = TryLoadPngAsIcon(System.IO.Path.Combine(iconsDir, "1.png"), preferredSize);
+            if (frame1 != null)
             {
-                System.IO.Path.Combine(iconsDir, "Idle_enhanced.ico"),
-                System.IO.Path.Combine(iconsDir, "Chewing1.ico"),
-                System.IO.Path.Combine(iconsDir, "chewing1.ico"),
-            };
-
-            foreach (string p in iconPaths)
-            {
-                if (System.IO.File.Exists(p))
-                {
-                    try
-                    {
-                        var icon = new Icon(p, preferredSize, preferredSize);
-                        Logger.Log($"Loaded idle icon at {preferredSize}px from {p}");
-                        return icon;
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            return new Icon(p);
-                        }
-                        catch { }
-                    }
-                }
+                Logger.Log($"Loaded idle icon at {preferredSize}px from 1.png");
+                return frame1;
             }
 
-            // Try loading from embedded resources
-            var resourceIcon = LoadIconFromResources("TailSlap.Icons.Chewing1.ico");
-            if (resourceIcon != null)
+            var favicon = TryLoadIco(System.IO.Path.Combine(iconsDir, "favicon.ico"), preferredSize);
+            if (favicon != null)
             {
-                Logger.Log("Loaded idle icon from embedded resources");
-                return resourceIcon;
+                Logger.Log($"Loaded idle icon at {preferredSize}px from favicon.ico");
+                return favicon;
             }
         }
         catch { }
@@ -304,33 +425,20 @@ public class MainForm : Form
         try
         {
             string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
-            string mainIconPath = System.IO.Path.Combine(iconsDir, "TailSlap.ico");
             int preferredSize = GetOptimalIconSize();
 
-            if (System.IO.File.Exists(mainIconPath))
+            var frame1 = TryLoadPngAsIcon(System.IO.Path.Combine(iconsDir, "1.png"), preferredSize);
+            if (frame1 != null)
             {
-                try
-                {
-                    var icon = new Icon(mainIconPath, preferredSize, preferredSize);
-                    Logger.Log($"Loaded main icon at {preferredSize}px from {mainIconPath}");
-                    return icon;
-                }
-                catch
-                {
-                    try
-                    {
-                        return new Icon(mainIconPath);
-                    }
-                    catch { }
-                }
+                Logger.Log($"Loaded main icon at {preferredSize}px from 1.png");
+                return frame1;
             }
 
-            // Try loading from embedded resources
-            var resourceIcon = LoadIconFromResources("TailSlap.Icons.TailSlap.ico");
-            if (resourceIcon != null)
+            var favicon = TryLoadIco(System.IO.Path.Combine(iconsDir, "favicon.ico"), preferredSize);
+            if (favicon != null)
             {
-                Logger.Log("Loaded main icon from embedded resources");
-                return resourceIcon;
+                Logger.Log($"Loaded main icon at {preferredSize}px from favicon.ico");
+                return favicon;
             }
         }
         catch { }
@@ -341,26 +449,45 @@ public class MainForm : Form
     {
         try
         {
-            using (var graphics = Graphics.FromHwnd(IntPtr.Zero))
-            {
-                float dpiX = graphics.DpiX;
-                // Scale icon size based on DPI: 96dpi = 16px, 192dpi = 32px, etc.
-                int baseSize = 16;
-                float scaleFactor = dpiX / 96.0f;
-                int scaledSize = (int)(baseSize * scaleFactor);
+            var s = SystemInformation.SmallIconSize;
+            int size = Math.Max(s.Width, s.Height);
+            if (size >= 16 && size <= 64)
+                return size;
 
-                // Clamp to reasonable sizes and ensure even numbers
-                scaledSize = Math.Max(16, Math.Min(48, scaledSize));
-                if (scaledSize % 2 != 0)
-                    scaledSize++;
-
-                return scaledSize;
-            }
+            using var graphics = Graphics.FromHwnd(IntPtr.Zero);
+            float dpiX = graphics.DpiX;
+            float scaleFactor = dpiX / 96.0f;
+            int scaledSize = (int)Math.Round(16.0f * scaleFactor);
+            scaledSize = Math.Max(16, Math.Min(64, scaledSize));
+            if (scaledSize % 2 != 0)
+                scaledSize++;
+            return scaledSize;
         }
         catch
         {
             return 16; // Fallback to standard size
         }
+    }
+
+    private void PulseProcessingTrayText()
+    {
+        long nowMs = Environment.TickCount64;
+        if (_lastPulseUpdateMs != 0 && nowMs - _lastPulseUpdateMs < TooltipPulseIntervalMs)
+            return;
+
+        _pulseDots = (_pulseDots + 1) % (TooltipPulseMaxDots + 1);
+        string dots = _pulseDots == 0 ? "" : new string('.', _pulseDots);
+        TrySetTrayText($"TailSlap - Processing{dots}");
+        _lastPulseUpdateMs = nowMs;
+    }
+
+    private void TrySetTrayText(string text)
+    {
+        try
+        {
+            _tray.Text = text;
+        }
+        catch { }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -917,6 +1044,9 @@ public class MainForm : Form
         }
         catch { }
         _frame = 0;
+        _lastPulseUpdateMs = 0;
+        _pulseDots = 0;
+        TrySetTrayText("TailSlap - Processing");
         _animTimer.Start();
     }
 
@@ -930,7 +1060,7 @@ public class MainForm : Form
         _animTimer.Stop();
         _frame = 0;
         _tray.Icon = _idleIcon;
-        _tray.Text = "TailSlap";
+        TrySetTrayText("TailSlap");
     }
 
     // Legacy Notify method kept for compatibility but should use NotificationService instead
@@ -947,6 +1077,9 @@ public class MainForm : Form
 
     [DllImport("user32.dll")]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll")]
+    private static extern bool DestroyIcon(IntPtr hIcon);
 
     private void RegisterHotkey(uint mods, uint vk, int hotkeyId)
     {
