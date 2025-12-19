@@ -24,7 +24,7 @@ public sealed class AppConfig
             Hotkey = Hotkey.Clone(),
             TranscriberHotkey = TranscriberHotkey.Clone(),
             Llm = Llm.Clone(),
-            Transcriber = Transcriber.Clone()
+            Transcriber = Transcriber.Clone(),
         };
     }
 }
@@ -36,11 +36,7 @@ public sealed class HotkeyConfig
 
     public HotkeyConfig Clone()
     {
-        return new HotkeyConfig
-        {
-            Modifiers = Modifiers,
-            Key = Key
-        };
+        return new HotkeyConfig { Modifiers = Modifiers, Key = Key };
     }
 }
 
@@ -59,7 +55,8 @@ public sealed class LlmConfig
     public string? ApiKey
     {
         get => string.IsNullOrEmpty(ApiKeyEncrypted) ? null : Dpapi.Unprotect(ApiKeyEncrypted);
-        set => ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
+        set =>
+            ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
     }
 
     public LlmConfig Clone()
@@ -73,7 +70,7 @@ public sealed class LlmConfig
             MaxTokens = MaxTokens,
             ApiKeyEncrypted = ApiKeyEncrypted,
             HttpReferer = HttpReferer,
-            XTitle = XTitle
+            XTitle = XTitle,
         };
     }
 }
@@ -94,7 +91,8 @@ public sealed class TranscriberConfig
     public string? ApiKey
     {
         get => string.IsNullOrEmpty(ApiKeyEncrypted) ? null : Dpapi.Unprotect(ApiKeyEncrypted);
-        set => ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
+        set =>
+            ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
     }
 
     public TranscriberConfig Clone()
@@ -109,7 +107,7 @@ public sealed class TranscriberConfig
             AutoPaste = AutoPaste,
             EnableVAD = EnableVAD,
             SilenceThresholdMs = SilenceThresholdMs,
-            PreferredMicrophoneIndex = PreferredMicrophoneIndex
+            PreferredMicrophoneIndex = PreferredMicrophoneIndex,
         };
     }
 }

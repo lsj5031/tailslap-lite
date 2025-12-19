@@ -213,10 +213,7 @@ public sealed class TextRefiner : ITextRefiner
         throw new Exception(finalError);
     }
 
-    private string GetUserFriendlyError(
-        System.Net.HttpStatusCode statusCode,
-        string errorBody
-    )
+    private string GetUserFriendlyError(System.Net.HttpStatusCode statusCode, string errorBody)
     {
         return statusCode switch
         {

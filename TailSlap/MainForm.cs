@@ -802,7 +802,9 @@ public class MainForm : Form
     {
         if (_isSettingsOpen)
         {
-            Logger.Log("Configuration change detected while Settings is open. Deferring hot-reload.");
+            Logger.Log(
+                "Configuration change detected while Settings is open. Deferring hot-reload."
+            );
             return;
         }
 
@@ -1314,12 +1316,18 @@ public class MainForm : Form
         {
             string keyName = ((Keys)vk).ToString();
             string modNames = "";
-            if ((mods & 0x0001) != 0) modNames += "Alt+";
-            if ((mods & 0x0002) != 0) modNames += "Ctrl+";
-            if ((mods & 0x0004) != 0) modNames += "Shift+";
-            if ((mods & 0x0008) != 0) modNames += "Win+";
-            
-            NotificationService.ShowError($"Failed to register hotkey: {modNames}{keyName}. It may be in use by another application.");
+            if ((mods & 0x0001) != 0)
+                modNames += "Alt+";
+            if ((mods & 0x0002) != 0)
+                modNames += "Ctrl+";
+            if ((mods & 0x0004) != 0)
+                modNames += "Shift+";
+            if ((mods & 0x0008) != 0)
+                modNames += "Win+";
+
+            NotificationService.ShowError(
+                $"Failed to register hotkey: {modNames}{keyName}. It may be in use by another application."
+            );
         }
     }
 
