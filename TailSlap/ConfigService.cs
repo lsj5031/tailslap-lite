@@ -60,7 +60,7 @@ public sealed class TranscriberConfig
     }
 }
 
-public sealed class ConfigService
+public sealed class ConfigService : IConfigService, IDisposable
 {
     private static string Dir =>
         Path.Combine(
@@ -68,7 +68,60 @@ public sealed class ConfigService
             "TailSlap"
         );
     private static string FilePath => Path.Combine(Dir, "config.json");
-    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+
+    private FileSystemWatcher? _watcher;
+    public event Action? ConfigChanged;
+    private DateTime _lastRead = DateTime.MinValue;
+    private bool _disposed;
+
+    public ConfigService()
+    {
+        SetupWatcher();
+    }
+
+    private void SetupWatcher()
+    {
+        try
+        {
+            if (!Directory.Exists(Dir))
+                Directory.CreateDirectory(Dir);
+
+            _watcher = new FileSystemWatcher(Dir, "config.json")
+            {
+                NotifyFilter =
+                    NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            };
+
+            _watcher.Changed += OnFileChanged;
+            _watcher.Created += OnFileChanged;
+            _watcher.Renamed += OnFileRenamed;
+            _watcher.Deleted += OnFileChanged;
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Watcher setup failed: {ex.Message}");
+            }
+            catch { }
+        }
+    }
+
+    private void OnFileChanged(object sender, FileSystemEventArgs e)
+    {
+        // Debounce: wait 500ms and check if last read was recent
+        if (DateTime.Now - _lastRead < TimeSpan.FromMilliseconds(500))
+            return;
+
+        _lastRead = DateTime.Now;
+        ConfigChanged?.Invoke();
+    }
+
+    private void OnFileRenamed(object sender, RenamedEventArgs e)
+    {
+        OnFileChanged(sender, e);
+    }
 
     public AppConfig LoadOrDefault()
     {
@@ -83,7 +136,8 @@ public sealed class ConfigService
                 return c;
             }
             var txt = File.ReadAllText(FilePath);
-            return JsonSerializer.Deserialize<AppConfig>(txt, JsonOpts) ?? new AppConfig();
+            return JsonSerializer.Deserialize(txt, TailSlapJsonContext.Default.AppConfig)
+                ?? new AppConfig();
         }
         catch (Exception ex)
         {
@@ -109,7 +163,11 @@ public sealed class ConfigService
         {
             if (!Directory.Exists(Dir))
                 Directory.CreateDirectory(Dir);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, JsonOpts));
+            _lastRead = DateTime.Now;
+            File.WriteAllText(
+                FilePath,
+                JsonSerializer.Serialize(cfg, TailSlapJsonContext.Default.AppConfig)
+            );
         }
         catch (Exception ex)
         {
@@ -211,10 +269,48 @@ public sealed class ConfigService
         // Default transcriber hotkey to Ctrl+Alt+T
         if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
         {
-            cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
-            cfg.TranscriberHotkey.Key = (uint)Keys.OemSemicolon;
+            cfg.TranscriberHotkey.Modifiers = 0x0003; // ALT + CTRL
+            cfg.TranscriberHotkey.Key = (uint)Keys.T;
         }
 
         return cfg;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        try
+        {
+            if (_watcher != null)
+            {
+                try
+                {
+                    _watcher.EnableRaisingEvents = false;
+                }
+                catch { }
+
+                try
+                {
+                    _watcher.Changed -= OnFileChanged;
+                    _watcher.Created -= OnFileChanged;
+                    _watcher.Renamed -= OnFileRenamed;
+                    _watcher.Deleted -= OnFileChanged;
+                }
+                catch { }
+
+                try
+                {
+                    _watcher.Dispose();
+                }
+                catch { }
+
+                _watcher = null;
+            }
+        }
+        catch { }
     }
 }

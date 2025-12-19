@@ -26,8 +26,12 @@ public class MainForm : Form
     private const int REFINEMENT_HOTKEY_ID = 1;
     private const int TRANSCRIBER_HOTKEY_ID = 2;
 
-    private readonly ConfigService _config;
-    private readonly ClipboardService _clip;
+    private readonly IConfigService _config;
+    private readonly IClipboardService _clip;
+    private readonly ITextRefinerFactory _textRefinerFactory;
+    private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
+    private readonly IHistoryService _history;
+
     private uint _currentMods;
     private uint _currentVk;
     private uint _transcriberMods;
@@ -37,8 +41,23 @@ public class MainForm : Form
     private bool _isTranscribing;
     private CancellationTokenSource? _transcriberCts;
 
-    public MainForm()
+    public MainForm(
+        IConfigService config,
+        IClipboardService clip,
+        ITextRefinerFactory textRefinerFactory,
+        IRemoteTranscriberFactory remoteTranscriberFactory,
+        IHistoryService history
+    )
     {
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _clip = clip ?? throw new ArgumentNullException(nameof(clip));
+        _textRefinerFactory =
+            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory =
+            remoteTranscriberFactory
+            ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+        _history = history ?? throw new ArgumentNullException(nameof(history));
+
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
         UpdateStyles();
@@ -47,9 +66,7 @@ public class MainForm : Form
         WindowState = FormWindowState.Minimized;
         Visible = false;
 
-        _config = new ConfigService();
-        _currentConfig = _config.LoadOrDefault();
-        _clip = new ClipboardService();
+        _currentConfig = _config.CreateValidatedCopy();
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
@@ -87,7 +104,7 @@ public class MainForm : Form
             {
                 try
                 {
-                    using var hf = new HistoryForm();
+                    using var hf = new HistoryForm(_history);
                     hf.ShowDialog();
                 }
                 catch
@@ -103,7 +120,7 @@ public class MainForm : Form
             {
                 try
                 {
-                    using var hf = new TranscriptionHistoryForm();
+                    using var hf = new TranscriptionHistoryForm(_history);
                     hf.ShowDialog();
                 }
                 catch
@@ -178,6 +195,18 @@ public class MainForm : Form
         Logger.Log(
             $"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Transcriber hotkey mods={_transcriberMods}, key={_transcriberVk}"
         );
+
+        _config.ConfigChanged += () =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(ReloadConfigFromDisk));
+            }
+            else
+            {
+                ReloadConfigFromDisk();
+            }
+        };
     }
 
     private Icon[] LoadAnimationFrames()
@@ -767,6 +796,52 @@ public class MainForm : Form
         }
     }
 
+    private void ReloadConfigFromDisk()
+    {
+        try
+        {
+            Logger.Log("Detected config file change on disk. Reloading...");
+            var newConfig = _config.CreateValidatedCopy();
+
+            // Check if hotkeys changed
+            bool refinementHotkeyChanged =
+                newConfig.Hotkey.Modifiers != _currentMods || newConfig.Hotkey.Key != _currentVk;
+            bool transcriberHotkeyChanged =
+                newConfig.TranscriberHotkey.Modifiers != _transcriberMods
+                || newConfig.TranscriberHotkey.Key != _transcriberVk;
+            bool transcriberStatusChanged =
+                newConfig.Transcriber.Enabled != _currentConfig.Transcriber.Enabled;
+
+            _currentConfig = newConfig;
+
+            if (refinementHotkeyChanged)
+            {
+                UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
+                _currentMods = _currentConfig.Hotkey.Modifiers;
+                _currentVk = _currentConfig.Hotkey.Key;
+                RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+            }
+
+            if (transcriberHotkeyChanged || transcriberStatusChanged)
+            {
+                UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+                if (_currentConfig.Transcriber.Enabled)
+                {
+                    _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+                    _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+                    RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+                }
+            }
+
+            NotificationService.ShowInfo("Configuration reloaded from disk.");
+            Logger.Log("Configuration hot-reload complete.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Error during config hot-reload: {ex.Message}");
+        }
+    }
+
     private async Task RefineSelectionAsync()
     {
         try
@@ -789,7 +864,7 @@ public class MainForm : Form
                 catch { }
                 return;
             }
-            var refiner = new TextRefiner(_currentConfig.Llm);
+            var refiner = _textRefinerFactory.Create(_currentConfig.Llm);
             var refined = await refiner.RefineAsync(text);
             Logger.Log(
                 $"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"
@@ -838,7 +913,7 @@ public class MainForm : Form
 
             try
             {
-                HistoryService.Append(text, refined, _currentConfig.Llm.Model);
+                _history.Append(text, refined, _currentConfig.Llm.Model);
             }
             catch { }
             Logger.Log("Refinement completed successfully.");
@@ -951,7 +1026,7 @@ public class MainForm : Form
             Logger.Log(
                 $"Creating RemoteTranscriber with BaseUrl: {_currentConfig.Transcriber.BaseUrl}"
             );
-            using var transcriber = new RemoteTranscriber(_currentConfig.Transcriber);
+            var transcriber = _remoteTranscriberFactory.Create(_currentConfig.Transcriber);
             string transcriptionText;
 
             try
@@ -1049,10 +1124,7 @@ public class MainForm : Form
             // Log transcription to history (separate from LLM refinement history)
             try
             {
-                HistoryService.AppendTranscription(
-                    transcriptionText,
-                    recordingStats?.DurationMs ?? 0
-                );
+                _history.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
                 Logger.Log(
                     $"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms"
                 );
@@ -1156,11 +1228,13 @@ public class MainForm : Form
 
     private static string Sha256Hex(string s)
     {
+        if (string.IsNullOrEmpty(s))
+            return "";
         try
         {
-            using var sha = SHA256.Create();
-            var bytes = Encoding.UTF8.GetBytes(s);
-            var hash = sha.ComputeHash(bytes);
+            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
+            Span<byte> hash = stackalloc byte[32];
+            SHA256.HashData(inputBytes, hash);
             return Convert.ToHexString(hash);
         }
         catch
@@ -1234,7 +1308,7 @@ public class MainForm : Form
 
     private void ShowSettings(AppConfig cfg)
     {
-        using var dlg = new SettingsForm(cfg);
+        using var dlg = new SettingsForm(cfg, _textRefinerFactory, _remoteTranscriberFactory);
         if (dlg.ShowDialog() == DialogResult.OK)
         {
             Logger.Log(
@@ -1246,7 +1320,7 @@ public class MainForm : Form
 
             _config.Save(_currentConfig);
             // Reload config from disk to ensure all validation/normalization is applied
-            _currentConfig = _config.LoadOrDefault();
+            _currentConfig = _config.CreateValidatedCopy();
 
             Logger.Log(
                 $"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"

@@ -15,9 +15,11 @@ public sealed class HistoryForm : Form
     private int _lastCount;
     private Button _refreshButton;
     private Label _statusLabel;
+    private readonly IHistoryService _history;
 
-    public HistoryForm()
+    public HistoryForm(IHistoryService history)
     {
+        _history = history ?? throw new ArgumentNullException(nameof(history));
         Text = "Encrypted Refinement History";
         StartPosition = FormStartPosition.CenterScreen;
         Width = 950;
@@ -187,7 +189,7 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            var items = HistoryService.ReadAll();
+            var items = _history.ReadAll();
             _list.Items.Clear();
 
             int corruptedCount = 0;
@@ -250,7 +252,7 @@ public sealed class HistoryForm : Form
         try
         {
             var idx = _list.SelectedIndex;
-            var all = HistoryService.ReadAll();
+            var all = _history.ReadAll();
             if (idx < 0 || idx >= all.Count)
                 return;
 
@@ -383,7 +385,7 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            var currentItems = HistoryService.ReadAll();
+            var currentItems = _history.ReadAll();
             if (currentItems.Count != _lastCount)
             {
                 RefreshHistory();

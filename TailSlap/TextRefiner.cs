@@ -8,18 +8,24 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-public sealed class TextRefiner
+public sealed class TextRefiner : ITextRefiner
 {
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+
     private readonly LlmConfig _cfg;
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly IHttpClientFactory _httpClientFactory;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        TypeInfoResolver = TailSlapJsonContext.Default,
     };
 
-    public TextRefiner(LlmConfig cfg)
+    public TextRefiner(LlmConfig cfg, IHttpClientFactory httpClientFactory)
     {
         _cfg = cfg;
+        _httpClientFactory =
+            httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
 
         var hasApiKey = !string.IsNullOrWhiteSpace(_cfg.ApiKey);
         var hasReferer = !string.IsNullOrWhiteSpace(_cfg.HttpReferer);
@@ -51,6 +57,9 @@ public sealed class TextRefiner
             NotificationService.ShowWarning(errorMsg);
             throw new ArgumentException(errorMsg);
         }
+
+        DiagnosticsEventSource.Log.RefinementStarted(_cfg.Model, text?.Length ?? 0);
+        var startTime = DateTime.UtcNow;
 
         var endpoint = Combine(_cfg.BaseUrl.TrimEnd('/'), "chat/completions");
         try
@@ -85,19 +94,21 @@ public sealed class TextRefiner
             },
         };
 
+        using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+
         int attempts = 2;
         while (attempts-- > 0)
         {
             try
             {
-                var json = JsonSerializer.Serialize(req, JsonOpts);
+                var json = JsonSerializer.Serialize(req, TailSlapJsonContext.Default.ChatRequest);
                 try
                 {
                     Logger.Log($"LLM request json size={json.Length} chars");
                 }
                 catch { }
 
-                var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json"),
                 };
@@ -109,10 +120,13 @@ public sealed class TextRefiner
                 if (!string.IsNullOrWhiteSpace(_cfg.XTitle))
                     request.Headers.TryAddWithoutValidation("X-Title", _cfg.XTitle);
 
-                using var resp = await Http.SendAsync(
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(DefaultRequestTimeout);
+
+                using var resp = await http.SendAsync(
                         request,
                         HttpCompletionOption.ResponseHeadersRead,
-                        ct
+                        timeoutCts.Token
                     )
                     .ConfigureAwait(false);
                 try
@@ -141,15 +155,19 @@ public sealed class TextRefiner
                             continue;
                         }
                     }
-                    var errorBody = await resp.Content.ReadAsStringAsync(ct);
+                    var errorBody = await resp
+                        .Content.ReadAsStringAsync(timeoutCts.Token)
+                        .ConfigureAwait(false);
                     var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
                     NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
                     throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
                 }
 
-                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var body = await resp
+                    .Content.ReadAsStringAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
                 var parsed =
-                    JsonSerializer.Deserialize<ChatResponse>(body, JsonOpts)
+                    JsonSerializer.Deserialize(body, TailSlapJsonContext.Default.ChatResponse)
                     ?? throw new Exception("Invalid response JSON");
                 if (parsed.Choices is not { Count: > 0 } || parsed.Choices[0].Message is null)
                     throw new Exception("No choices in response");
@@ -161,6 +179,14 @@ public sealed class TextRefiner
                     );
                 }
                 catch { }
+
+                var elapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
+                DiagnosticsEventSource.Log.RefinementCompleted(
+                    elapsedMs,
+                    result.Length,
+                    _cfg.MaxTokens
+                );
+
                 return result;
             }
             catch (Exception ex) when (attempts > 0)
@@ -170,11 +196,19 @@ public sealed class TextRefiner
                     Logger.Log("LLM exception: " + ex.Message + "; retrying in 1s");
                 }
                 catch { }
+                DiagnosticsEventSource.Log.RefinementRetry(
+                    2 - attempts,
+                    ex.Message ?? "Unknown error",
+                    1000
+                );
                 await Task.Delay(1000, ct);
             }
         }
+
+        var finalElapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
         var finalError =
             "LLM service unavailable after multiple attempts. Please check your connection and settings.";
+        DiagnosticsEventSource.Log.RefinementFailed(finalError, null);
         NotificationService.ShowError(finalError);
         throw new Exception(finalError);
     }
@@ -208,48 +242,18 @@ public sealed class TextRefiner
 
     private static string Sha256Hex(string s)
     {
+        if (string.IsNullOrEmpty(s))
+            return "";
         try
         {
-            using var sha = SHA256.Create();
-            var bytes = Encoding.UTF8.GetBytes(s);
-            var hash = sha.ComputeHash(bytes);
+            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
+            Span<byte> hash = stackalloc byte[32];
+            SHA256.HashData(inputBytes, hash);
             return Convert.ToHexString(hash);
         }
         catch
         {
             return "";
-        }
-    }
-
-    private sealed class ChatRequest
-    {
-        public string Model { get; set; } = "";
-        public List<Msg> Messages { get; set; } = new();
-        public double Temperature { get; set; }
-
-        [JsonPropertyName("max_tokens")]
-        public int? MaxTokens { get; set; }
-    }
-
-    private sealed class Msg
-    {
-        public string Role { get; set; } = "";
-        public string Content { get; set; } = "";
-    }
-
-    private sealed class ChatResponse
-    {
-        public List<Choice> Choices { get; set; } = new();
-
-        public sealed class Choice
-        {
-            public ChoiceMsg Message { get; set; } = new();
-        }
-
-        public sealed class ChoiceMsg
-        {
-            public string Role { get; set; } = "";
-            public string Content { get; set; } = "";
         }
     }
 }
