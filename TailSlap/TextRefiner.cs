@@ -58,6 +58,9 @@ public sealed class TextRefiner : ITextRefiner
             throw new ArgumentException(errorMsg);
         }
 
+        DiagnosticsEventSource.Log.RefinementStarted(_cfg.Model, text?.Length ?? 0);
+        var startTime = DateTime.UtcNow;
+
         var endpoint = Combine(_cfg.BaseUrl.TrimEnd('/'), "chat/completions");
         try
         {
@@ -176,6 +179,10 @@ public sealed class TextRefiner : ITextRefiner
                     );
                 }
                 catch { }
+
+                var elapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
+                DiagnosticsEventSource.Log.RefinementCompleted(elapsedMs, result.Length, _cfg.MaxTokens);
+
                 return result;
             }
             catch (Exception ex) when (attempts > 0)
@@ -185,11 +192,15 @@ public sealed class TextRefiner : ITextRefiner
                     Logger.Log("LLM exception: " + ex.Message + "; retrying in 1s");
                 }
                 catch { }
+                DiagnosticsEventSource.Log.RefinementRetry(2 - attempts, ex.Message ?? "Unknown error", 1000);
                 await Task.Delay(1000, ct);
             }
         }
+
+        var finalElapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
         var finalError =
             "LLM service unavailable after multiple attempts. Please check your connection and settings.";
+        DiagnosticsEventSource.Log.RefinementFailed(finalError, null);
         NotificationService.ShowError(finalError);
         throw new Exception(finalError);
     }

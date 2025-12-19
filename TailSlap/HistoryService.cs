@@ -70,7 +70,9 @@ public sealed class HistoryService : IHistoryService
             };
 
             var line = JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry);
+            int entrySize = line.Length;
             File.AppendAllText(FilePath, line + Environment.NewLine);
+            DiagnosticsEventSource.Log.HistoryAppend("refinement", entrySize);
             Trim();
         }
         catch (Exception ex)
@@ -154,7 +156,9 @@ public sealed class HistoryService : IHistoryService
             if (all.Count <= MaxEntries)
                 return;
 
+            int beforeCount = all.Count;
             var trimmed = all.GetRange(all.Count - MaxEntries, MaxEntries);
+            int afterCount = trimmed.Count;
 
             using var stream = new FileStream(
                 FilePath,
@@ -177,6 +181,8 @@ public sealed class HistoryService : IHistoryService
                     JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry)
                 );
             }
+            
+            DiagnosticsEventSource.Log.HistoryTrim("refinement", beforeCount, afterCount);
         }
         catch (Exception ex)
         {
@@ -208,7 +214,9 @@ public sealed class HistoryService : IHistoryService
                 entry,
                 TailSlapJsonContext.Default.TranscriptionHistoryEntry
             );
+            int entrySize = line.Length;
             File.AppendAllText(TranscriptionFilePath, line + Environment.NewLine);
+            DiagnosticsEventSource.Log.HistoryAppend("transcription", entrySize);
             TrimTranscriptions();
         }
         catch (Exception ex)
@@ -288,7 +296,9 @@ public sealed class HistoryService : IHistoryService
             if (all.Count <= MaxEntries)
                 return;
 
+            int beforeCount = all.Count;
             var trimmed = all.GetRange(all.Count - MaxEntries, MaxEntries);
+            int afterCount = trimmed.Count;
 
             using var stream = new FileStream(
                 TranscriptionFilePath,
@@ -313,6 +323,8 @@ public sealed class HistoryService : IHistoryService
                     )
                 );
             }
+            
+            DiagnosticsEventSource.Log.HistoryTrim("transcription", beforeCount, afterCount);
         }
         catch (Exception ex)
         {
