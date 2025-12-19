@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 
 [JsonSourceGenerationOptions(
-    WriteIndented = true,
+    WriteIndented = false,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 )]

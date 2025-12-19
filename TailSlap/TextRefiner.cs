@@ -101,7 +101,7 @@ public sealed class TextRefiner : ITextRefiner
         {
             try
             {
-                var json = JsonSerializer.Serialize(req, TailSlapJsonContext.Default.ChatRequest);
+                var json = JsonSerializer.Serialize(req, JsonOpts);
                 try
                 {
                     Logger.Log($"LLM request json size={json.Length} chars");
@@ -114,7 +114,7 @@ public sealed class TextRefiner : ITextRefiner
                 };
 
                 if (!string.IsNullOrWhiteSpace(_cfg.ApiKey))
-                    request.Headers.Authorization = new("Bearer", _cfg.ApiKey);
+                    request.Headers.Authorization = new("Bearer", _cfg.ApiKey.Trim());
                 if (!string.IsNullOrWhiteSpace(_cfg.HttpReferer))
                     request.Headers.TryAddWithoutValidation("Referer", _cfg.HttpReferer);
                 if (!string.IsNullOrWhiteSpace(_cfg.XTitle))
@@ -207,13 +207,13 @@ public sealed class TextRefiner : ITextRefiner
 
         var finalElapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
         var finalError =
-            "LLM service unavailable after multiple attempts. Please check your connection and settings.";
+            $"LLM service unavailable after multiple attempts at {_cfg.BaseUrl}. Please check your connection and settings.";
         DiagnosticsEventSource.Log.RefinementFailed(finalError, null);
         NotificationService.ShowError(finalError);
         throw new Exception(finalError);
     }
 
-    private static string GetUserFriendlyError(
+    private string GetUserFriendlyError(
         System.Net.HttpStatusCode statusCode,
         string errorBody
     )
@@ -224,7 +224,7 @@ public sealed class TextRefiner : ITextRefiner
                 "Invalid API key or authentication failed. Check your settings.",
             System.Net.HttpStatusCode.Forbidden => "Access forbidden. Verify your API permissions.",
             System.Net.HttpStatusCode.NotFound =>
-                "LLM endpoint not found. Check the Base URL in settings.",
+                $"LLM endpoint not found. Check the Base URL in settings: {_cfg.BaseUrl}",
             System.Net.HttpStatusCode.BadRequest => "Invalid request. Check model configuration.",
             System.Net.HttpStatusCode.TooManyRequests =>
                 "Rate limit exceeded. Please wait before trying again.",
@@ -233,7 +233,7 @@ public sealed class TextRefiner : ITextRefiner
             System.Net.HttpStatusCode.ServiceUnavailable =>
                 "LLM service temporarily unavailable. Try again later.",
             System.Net.HttpStatusCode.GatewayTimeout =>
-                "LLM request timed out. Check your connection.",
+                $"LLM request timed out at {_cfg.BaseUrl}. Check your connection.",
             _ => $"Server error ({(int)statusCode}). Please try again.",
         };
     }

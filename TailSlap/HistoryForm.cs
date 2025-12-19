@@ -113,6 +113,12 @@ public sealed class HistoryForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
+        var clear = new Button
+        {
+            Text = "Clear History",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
 
         copyR.Click += (_, __) =>
         {
@@ -151,11 +157,43 @@ public sealed class HistoryForm : Form
             }
         };
         _refreshButton.Click += (_, __) => RefreshHistory();
+        clear.Click += (_, __) =>
+        {
+            try
+            {
+                if (
+                    MessageBox.Show(
+                        "Are you sure you want to delete all encrypted refinement history? This action is irreversible.",
+                        "Confirm Delete",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning
+                    ) == DialogResult.Yes
+                )
+                {
+                    _history.ClearRefinementHistory();
+                    Populate();
+                    _orig.Clear();
+                    _ref.Clear();
+                    _diff.Clear();
+                    NotificationService.ShowSuccess("Encrypted refinement history cleared.");
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Log($"Clear encrypted history failed: {ex.Message}");
+                }
+                catch { }
+                NotificationService.ShowError("Failed to clear encrypted history.");
+            }
+        };
 
         buttons.Controls.Add(copyR);
         buttons.Controls.Add(copyO);
         buttons.Controls.Add(copyD);
         buttons.Controls.Add(_refreshButton);
+        buttons.Controls.Add(clear);
 
         Controls.Add(split);
         Controls.Add(buttons);

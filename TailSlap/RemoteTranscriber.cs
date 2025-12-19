@@ -141,7 +141,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         {
             throw new TranscriberException(
                 TranscriberErrorType.NetworkTimeout,
-                $"Remote API request timed out after {_config.TimeoutSeconds}s",
+                $"Remote API request timed out after {_config.TimeoutSeconds}s at {_config.BaseUrl}",
                 e
             );
         }
@@ -149,7 +149,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         {
             throw new TranscriberException(
                 TranscriberErrorType.ConnectionFailed,
-                "Failed to connect to remote API",
+                $"Failed to connect to remote API at {_config.BaseUrl}",
                 e
             );
         }
@@ -300,7 +300,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             {
                 var ex = new TranscriberException(
                     TranscriberErrorType.NetworkTimeout,
-                    $"Remote API request timed out after {_config.TimeoutSeconds}s",
+                    $"Remote API request timed out after {_config.TimeoutSeconds}s at {_config.BaseUrl}",
                     e
                 );
                 if (attempts > 0)
@@ -319,7 +319,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             {
                 var ex = new TranscriberException(
                     TranscriberErrorType.ConnectionFailed,
-                    "Failed to connect to remote API",
+                    $"Failed to connect to remote API at {_config.BaseUrl}",
                     e
                 );
                 if (attempts > 0)

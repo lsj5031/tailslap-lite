@@ -39,6 +39,7 @@ public class MainForm : Form
     private AppConfig _currentConfig;
     private bool _isRefining;
     private bool _isTranscribing;
+    private bool _isSettingsOpen;
     private CancellationTokenSource? _transcriberCts;
 
     public MainForm(
@@ -756,6 +757,7 @@ public class MainForm : Form
             try
             {
                 _transcriberCts?.Cancel();
+                NotificationService.ShowInfo("Stopping recording... Processing audio.");
             }
             catch (Exception ex)
             {
@@ -798,6 +800,12 @@ public class MainForm : Form
 
     private void ReloadConfigFromDisk()
     {
+        if (_isSettingsOpen)
+        {
+            Logger.Log("Configuration change detected while Settings is open. Deferring hot-reload.");
+            return;
+        }
+
         try
         {
             Logger.Log("Detected config file change on disk. Reloading...");
@@ -1303,56 +1311,75 @@ public class MainForm : Form
         var ok = RegisterHotKey(Handle, hotkeyId, mods, vk);
         Logger.Log($"RegisterHotKey mods={mods}, key={vk}, id={hotkeyId}, ok={ok}");
         if (!ok)
-            NotificationService.ShowError("Failed to register hotkey.");
+        {
+            string keyName = ((Keys)vk).ToString();
+            string modNames = "";
+            if ((mods & 0x0001) != 0) modNames += "Alt+";
+            if ((mods & 0x0002) != 0) modNames += "Ctrl+";
+            if ((mods & 0x0004) != 0) modNames += "Shift+";
+            if ((mods & 0x0008) != 0) modNames += "Win+";
+            
+            NotificationService.ShowError($"Failed to register hotkey: {modNames}{keyName}. It may be in use by another application.");
+        }
     }
 
     private void ShowSettings(AppConfig cfg)
     {
-        using var dlg = new SettingsForm(cfg, _textRefinerFactory, _remoteTranscriberFactory);
-        if (dlg.ShowDialog() == DialogResult.OK)
+        _isSettingsOpen = true;
+        try
         {
-            Logger.Log(
-                $"Settings OK clicked. LLM hotkey before save: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"
-            );
-            Logger.Log(
-                $"Transcriber hotkey before save: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}"
-            );
-
-            _config.Save(_currentConfig);
-            // Reload config from disk to ensure all validation/normalization is applied
-            _currentConfig = _config.CreateValidatedCopy();
-
-            Logger.Log(
-                $"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"
-            );
-            Logger.Log(
-                $"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}"
-            );
-
-            // Re-register refinement hotkey
-            try
+            // Create a clone to edit so we don't modify the live config until OK is clicked
+            var clone = cfg.Clone();
+            using var dlg = new SettingsForm(clone, _textRefinerFactory, _remoteTranscriberFactory);
+            if (dlg.ShowDialog() == DialogResult.OK)
             {
-                UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
-            }
-            catch { }
-            _currentMods = _currentConfig.Hotkey.Modifiers;
-            _currentVk = _currentConfig.Hotkey.Key;
-            RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+                Logger.Log(
+                    $"Settings OK clicked. LLM hotkey before save: mods={clone.Hotkey.Modifiers}, key={clone.Hotkey.Key}"
+                );
+                Logger.Log(
+                    $"Transcriber hotkey before save: mods={clone.TranscriberHotkey.Modifiers}, key={clone.TranscriberHotkey.Key}"
+                );
 
-            // Re-register transcriber hotkey if transcriber was enabled/disabled
-            try
-            {
-                UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
-            }
-            catch { }
-            _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
-            _transcriberVk = _currentConfig.TranscriberHotkey.Key;
-            if (_currentConfig.Transcriber.Enabled)
-            {
-                RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-            }
+                // Update the live config object with the values from the clone
+                _currentConfig = clone;
+                _config.Save(_currentConfig);
 
-            NotificationService.ShowSuccess("Settings saved.");
+                Logger.Log(
+                    $"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"
+                );
+                Logger.Log(
+                    $"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}"
+                );
+
+                // Re-register refinement hotkey
+                try
+                {
+                    UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
+                }
+                catch { }
+                _currentMods = _currentConfig.Hotkey.Modifiers;
+                _currentVk = _currentConfig.Hotkey.Key;
+                RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+
+                // Re-register transcriber hotkey if transcriber was enabled/disabled
+                try
+                {
+                    UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+                }
+                catch { }
+                _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+                _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+                if (_currentConfig.Transcriber.Enabled)
+                {
+                    RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+                }
+
+                NotificationService.ShowSuccess("Settings saved.");
+            }
+        }
+        finally
+        {
+            _isSettingsOpen = false;
         }
     }
 }

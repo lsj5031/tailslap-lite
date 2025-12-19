@@ -7,5 +7,6 @@ public interface IHistoryService
     List<(DateTime Timestamp, string Model, string Original, string Refined)> ReadAll();
     void AppendTranscription(string text, int recordingDurationMs);
     List<(DateTime Timestamp, string Text, int RecordingDurationMs)> ReadAllTranscriptions();
-    void ClearAll();
+    void ClearRefinementHistory();
+    void ClearTranscriptionHistory();
 }

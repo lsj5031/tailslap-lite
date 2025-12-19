@@ -8,17 +8,40 @@ public sealed class AppConfig
 {
     public bool AutoPaste { get; set; } = true;
     public bool UseClipboardFallback { get; set; } = true;
-    public HotkeyConfig Hotkey { get; set; } = new(); // Ctrl+Alt+R for LLM
+    public HotkeyConfig Hotkey { get; set; } =
+        new() { Modifiers = 0x0006, Key = (uint)Keys.OemSemicolon }; // Ctrl+Shift+; for LLM
     public HotkeyConfig TranscriberHotkey { get; set; } =
-        new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
+        new() { Modifiers = 0x0006, Key = (uint)Keys.OemQuotes }; // Ctrl+Shift+' for Transcriber
     public LlmConfig Llm { get; set; } = new();
     public TranscriberConfig Transcriber { get; set; } = new();
+
+    public AppConfig Clone()
+    {
+        return new AppConfig
+        {
+            AutoPaste = AutoPaste,
+            UseClipboardFallback = UseClipboardFallback,
+            Hotkey = Hotkey.Clone(),
+            TranscriberHotkey = TranscriberHotkey.Clone(),
+            Llm = Llm.Clone(),
+            Transcriber = Transcriber.Clone()
+        };
+    }
 }
 
 public sealed class HotkeyConfig
 {
-    public uint Modifiers { get; set; } = 0x0003; // ALT + CTRL
-    public uint Key { get; set; } = (uint)Keys.R;
+    public uint Modifiers { get; set; } = 0x0006; // CTRL + SHIFT
+    public uint Key { get; set; } = (uint)Keys.OemSemicolon;
+
+    public HotkeyConfig Clone()
+    {
+        return new HotkeyConfig
+        {
+            Modifiers = Modifiers,
+            Key = Key
+        };
+    }
 }
 
 public sealed class LlmConfig
@@ -36,7 +59,22 @@ public sealed class LlmConfig
     public string? ApiKey
     {
         get => string.IsNullOrEmpty(ApiKeyEncrypted) ? null : Dpapi.Unprotect(ApiKeyEncrypted);
-        set => ApiKeyEncrypted = string.IsNullOrEmpty(value) ? null : Dpapi.Protect(value!);
+        set => ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
+    }
+
+    public LlmConfig Clone()
+    {
+        return new LlmConfig
+        {
+            Enabled = Enabled,
+            BaseUrl = BaseUrl,
+            Model = Model,
+            Temperature = Temperature,
+            MaxTokens = MaxTokens,
+            ApiKeyEncrypted = ApiKeyEncrypted,
+            HttpReferer = HttpReferer,
+            XTitle = XTitle
+        };
     }
 }
 
@@ -56,7 +94,23 @@ public sealed class TranscriberConfig
     public string? ApiKey
     {
         get => string.IsNullOrEmpty(ApiKeyEncrypted) ? null : Dpapi.Unprotect(ApiKeyEncrypted);
-        set => ApiKeyEncrypted = string.IsNullOrEmpty(value) ? null : Dpapi.Protect(value!);
+        set => ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
+    }
+
+    public TranscriberConfig Clone()
+    {
+        return new TranscriberConfig
+        {
+            Enabled = Enabled,
+            BaseUrl = BaseUrl,
+            Model = Model,
+            ApiKeyEncrypted = ApiKeyEncrypted,
+            TimeoutSeconds = TimeoutSeconds,
+            AutoPaste = AutoPaste,
+            EnableVAD = EnableVAD,
+            SilenceThresholdMs = SilenceThresholdMs,
+            PreferredMicrophoneIndex = PreferredMicrophoneIndex
+        };
     }
 }
 
@@ -136,8 +190,14 @@ public sealed class ConfigService : IConfigService, IDisposable
                 return c;
             }
             var txt = File.ReadAllText(FilePath);
-            return JsonSerializer.Deserialize(txt, TailSlapJsonContext.Default.AppConfig)
-                ?? new AppConfig();
+            var cfg = JsonSerializer.Deserialize(txt, TailSlapJsonContext.Default.AppConfig);
+            if (cfg == null)
+            {
+                Logger.Log("Config deserialization returned null. Using defaults.");
+                return new AppConfig();
+            }
+            Logger.Log($"Config loaded successfully from {FilePath}");
+            return cfg;
         }
         catch (Exception ex)
         {
@@ -164,10 +224,13 @@ public sealed class ConfigService : IConfigService, IDisposable
             if (!Directory.Exists(Dir))
                 Directory.CreateDirectory(Dir);
             _lastRead = DateTime.Now;
-            File.WriteAllText(
-                FilePath,
-                JsonSerializer.Serialize(cfg, TailSlapJsonContext.Default.AppConfig)
-            );
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                TypeInfoResolver = TailSlapJsonContext.Default,
+            };
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, options));
         }
         catch (Exception ex)
         {
@@ -269,8 +332,8 @@ public sealed class ConfigService : IConfigService, IDisposable
         // Default transcriber hotkey to Ctrl+Alt+T
         if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
         {
-            cfg.TranscriberHotkey.Modifiers = 0x0003; // ALT + CTRL
-            cfg.TranscriberHotkey.Key = (uint)Keys.T;
+            cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
+            cfg.TranscriberHotkey.Key = (uint)Keys.OemQuotes;
         }
 
         return cfg;

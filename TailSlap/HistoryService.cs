@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 public sealed class HistoryService : IHistoryService
 {
@@ -15,6 +16,14 @@ public sealed class HistoryService : IHistoryService
     private static string TranscriptionFilePath =>
         Path.Combine(Dir, "transcription-history.jsonl.encrypted");
     private const int MaxEntries = 50;
+
+    private static readonly JsonSerializerOptions JsonLOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        TypeInfoResolver = TailSlapJsonContext.Default
+    };
 
     private static string EncryptString(string plaintext)
     {
@@ -69,7 +78,7 @@ public sealed class HistoryService : IHistoryService
                 RefinedCiphertext = EncryptString(refined),
             };
 
-            var line = JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry);
+            var line = JsonSerializer.Serialize(entry, JsonLOptions);
             int entrySize = line.Length;
             File.AppendAllText(FilePath, line + Environment.NewLine);
             DiagnosticsEventSource.Log.HistoryAppend("refinement", entrySize);
@@ -110,9 +119,9 @@ public sealed class HistoryService : IHistoryService
                     continue;
                 try
                 {
-                    var entry = JsonSerializer.Deserialize(
+                    var entry = JsonSerializer.Deserialize<HistoryEntry>(
                         line,
-                        TailSlapJsonContext.Default.HistoryEntry
+                        JsonLOptions
                     );
                     if (entry != null)
                     {
@@ -128,7 +137,7 @@ public sealed class HistoryService : IHistoryService
                 {
                     try
                     {
-                        Logger.Log($"Encrypted history entry parse error: {ex.Message}");
+                        Logger.Log($"Encrypted history entry parse error (line too long or invalid): {line.Length} chars. Error: {ex.Message}");
                     }
                     catch { }
                 }
@@ -178,7 +187,7 @@ public sealed class HistoryService : IHistoryService
                     RefinedCiphertext = EncryptString(refined),
                 };
                 writer.WriteLine(
-                    JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry)
+                    JsonSerializer.Serialize(entry, JsonLOptions)
                 );
             }
 
@@ -212,7 +221,7 @@ public sealed class HistoryService : IHistoryService
 
             var line = JsonSerializer.Serialize(
                 entry,
-                TailSlapJsonContext.Default.TranscriptionHistoryEntry
+                JsonLOptions
             );
             int entrySize = line.Length;
             File.AppendAllText(TranscriptionFilePath, line + Environment.NewLine);
@@ -254,9 +263,9 @@ public sealed class HistoryService : IHistoryService
                     continue;
                 try
                 {
-                    var entry = JsonSerializer.Deserialize(
+                    var entry = JsonSerializer.Deserialize<TranscriptionHistoryEntry>(
                         line,
-                        TailSlapJsonContext.Default.TranscriptionHistoryEntry
+                        JsonLOptions
                     );
                     if (entry != null)
                     {
@@ -268,7 +277,7 @@ public sealed class HistoryService : IHistoryService
                 {
                     try
                     {
-                        Logger.Log($"Encrypted transcription history parse error: {ex.Message}");
+                        Logger.Log($"Encrypted transcription history parse error (line too long or invalid): {line.Length} chars. Error: {ex.Message}");
                     }
                     catch { }
                 }
@@ -319,7 +328,7 @@ public sealed class HistoryService : IHistoryService
                 writer.WriteLine(
                     JsonSerializer.Serialize(
                         entry,
-                        TailSlapJsonContext.Default.TranscriptionHistoryEntry
+                        JsonLOptions
                     )
                 );
             }
@@ -339,12 +348,30 @@ public sealed class HistoryService : IHistoryService
         }
     }
 
-    public void ClearAll()
+    public void ClearRefinementHistory()
     {
         try
         {
             if (File.Exists(FilePath))
                 File.Delete(FilePath);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Failed to clear encrypted refinement history: {ex.Message}");
+            }
+            catch { }
+            NotificationService.ShowError(
+                "Failed to clear encrypted refinement history. Check file permissions."
+            );
+        }
+    }
+
+    public void ClearTranscriptionHistory()
+    {
+        try
+        {
             if (File.Exists(TranscriptionFilePath))
                 File.Delete(TranscriptionFilePath);
         }
@@ -352,11 +379,11 @@ public sealed class HistoryService : IHistoryService
         {
             try
             {
-                Logger.Log($"Failed to clear encrypted history: {ex.Message}");
+                Logger.Log($"Failed to clear encrypted transcription history: {ex.Message}");
             }
             catch { }
             NotificationService.ShowError(
-                "Failed to clear encrypted history files. Check file permissions."
+                "Failed to clear encrypted transcription history. Check file permissions."
             );
         }
     }

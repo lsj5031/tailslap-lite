@@ -101,7 +101,7 @@ public sealed class TranscriptionHistoryForm : Form
                     ) == DialogResult.Yes
                 )
                 {
-                    _history.ClearAll();
+                    _history.ClearTranscriptionHistory();
                     SafePopulate();
                     NotificationService.ShowSuccess("Encrypted transcription history cleared.");
                 }
