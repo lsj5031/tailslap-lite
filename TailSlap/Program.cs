@@ -70,6 +70,7 @@ internal static class Program
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<ITextRefinerFactory, TextRefinerFactory>();
         services.AddSingleton<IRemoteTranscriberFactory, RemoteTranscriberFactory>();
+        services.AddSingleton<IHistoryService, HistoryService>();
 
         services.AddTransient<MainForm>();
 

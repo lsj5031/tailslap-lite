@@ -18,6 +18,7 @@ public sealed class TextRefiner : ITextRefiner
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        TypeInfoResolver = TailSlapJsonContext.Default
     };
 
     public TextRefiner(LlmConfig cfg, IHttpClientFactory httpClientFactory)
@@ -96,7 +97,7 @@ public sealed class TextRefiner : ITextRefiner
         {
             try
             {
-                var json = JsonSerializer.Serialize(req, JsonOpts);
+                var json = JsonSerializer.Serialize(req, TailSlapJsonContext.Default.ChatRequest);
                 try
                 {
                     Logger.Log($"LLM request json size={json.Length} chars");
@@ -162,7 +163,7 @@ public sealed class TextRefiner : ITextRefiner
                     .ReadAsStringAsync(timeoutCts.Token)
                     .ConfigureAwait(false);
                 var parsed =
-                    JsonSerializer.Deserialize<ChatResponse>(body, JsonOpts)
+                    JsonSerializer.Deserialize(body, TailSlapJsonContext.Default.ChatResponse)
                     ?? throw new Exception("Invalid response JSON");
                 if (parsed.Choices is not { Count: > 0 } || parsed.Choices[0].Message is null)
                     throw new Exception("No choices in response");
@@ -221,11 +222,13 @@ public sealed class TextRefiner : ITextRefiner
 
     private static string Sha256Hex(string s)
     {
+        if (string.IsNullOrEmpty(s))
+            return "";
         try
         {
-            using var sha = SHA256.Create();
-            var bytes = Encoding.UTF8.GetBytes(s);
-            var hash = sha.ComputeHash(bytes);
+            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
+            Span<byte> hash = stackalloc byte[32];
+            SHA256.HashData(inputBytes, hash);
             return Convert.ToHexString(hash);
         }
         catch
@@ -234,35 +237,4 @@ public sealed class TextRefiner : ITextRefiner
         }
     }
 
-    private sealed class ChatRequest
-    {
-        public string Model { get; set; } = "";
-        public List<Msg> Messages { get; set; } = new();
-        public double Temperature { get; set; }
-
-        [JsonPropertyName("max_tokens")]
-        public int? MaxTokens { get; set; }
-    }
-
-    private sealed class Msg
-    {
-        public string Role { get; set; } = "";
-        public string Content { get; set; } = "";
-    }
-
-    private sealed class ChatResponse
-    {
-        public List<Choice> Choices { get; set; } = new();
-
-        public sealed class Choice
-        {
-            public ChoiceMsg Message { get; set; } = new();
-        }
-
-        public sealed class ChoiceMsg
-        {
-            public string Role { get; set; } = "";
-            public string Content { get; set; } = "";
-        }
-    }
 }

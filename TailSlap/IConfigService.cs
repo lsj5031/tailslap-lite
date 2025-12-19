@@ -4,4 +4,5 @@ public interface IConfigService
     void Save(AppConfig cfg);
     string GetConfigPath();
     AppConfig CreateValidatedCopy();
+    event System.Action? ConfigChanged;
 }

@@ -48,22 +48,26 @@ public static class Logger
                 catch { }
 
                 // Process queued items
-                int itemsWritten = 0;
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
 
-                    while (LogQueue.TryDequeue(out var line) && itemsWritten < 100)
+                    if (LogQueue.Count > 0)
                     {
-                        try
+                        using var stream = new FileStream(
+                            LogPath,
+                            FileMode.Append,
+                            FileAccess.Write,
+                            FileShare.ReadWrite
+                        );
+                        using var writer = new StreamWriter(stream);
+                        int itemsWritten = 0;
+                        while (LogQueue.TryDequeue(out var line) && itemsWritten < 100)
                         {
-                            File.AppendAllText(LogPath, line + "\n");
+                            writer.WriteLine(line);
                             itemsWritten++;
                         }
-                        catch
-                        {
-                            // Ignore individual write failures and continue
-                        }
+                        writer.Flush();
                     }
                 }
                 catch

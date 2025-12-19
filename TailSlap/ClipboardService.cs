@@ -81,6 +81,14 @@ public sealed class ClipboardService : IClipboardService
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
+    [DllImport("ole32.dll")]
+    private static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
+
+    [DllImport("ole32.dll")]
+    private static extern void CoUninitialize();
+
+    private const uint COINIT_MULTITHREADED = 0x0;
+
     private const uint WM_COPY = 0x0301;
     private const uint WM_GETTEXT = 0x000D;
     private const uint WM_GETTEXTLENGTH = 0x000E;
@@ -2287,8 +2295,12 @@ public sealed class ClipboardService : IClipboardService
         Thread? th = null;
         th = new Thread(() =>
         {
+            bool comInit = false;
             try
             {
+                int hr = CoInitializeEx(IntPtr.Zero, COINIT_MULTITHREADED);
+                comInit = (hr == 0 || hr == 1); // S_OK or S_FALSE
+
                 var r = func();
                 tcs.SetResult(r);
             }
@@ -2310,6 +2322,13 @@ public sealed class ClipboardService : IClipboardService
                 }
                 catch { }
                 tcs.TrySetException(ex);
+            }
+            finally
+            {
+                if (comInit)
+                {
+                    CoUninitialize();
+                }
             }
         });
         th.IsBackground = true;

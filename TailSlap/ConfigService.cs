@@ -68,7 +68,57 @@ public sealed class ConfigService : IConfigService
             "TailSlap"
         );
     private static string FilePath => Path.Combine(Dir, "config.json");
-    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        TypeInfoResolver = TailSlapJsonContext.Default
+    };
+
+    private FileSystemWatcher? _watcher;
+    public event Action? ConfigChanged;
+    private DateTime _lastRead = DateTime.MinValue;
+
+    public ConfigService()
+    {
+        SetupWatcher();
+    }
+
+    private void SetupWatcher()
+    {
+        try
+        {
+            if (!Directory.Exists(Dir))
+                Directory.CreateDirectory(Dir);
+
+            _watcher = new FileSystemWatcher(Dir, "config.json")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size
+            };
+
+            _watcher.Changed += OnFileChanged;
+            _watcher.Created += OnFileChanged;
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Watcher setup failed: {ex.Message}");
+            }
+            catch { }
+        }
+    }
+
+    private void OnFileChanged(object sender, FileSystemEventArgs e)
+    {
+        // Debounce: wait 500ms and check if last read was recent
+        if (DateTime.Now - _lastRead < TimeSpan.FromMilliseconds(500))
+            return;
+
+        _lastRead = DateTime.Now;
+        ConfigChanged?.Invoke();
+    }
 
     public AppConfig LoadOrDefault()
     {
@@ -83,7 +133,8 @@ public sealed class ConfigService : IConfigService
                 return c;
             }
             var txt = File.ReadAllText(FilePath);
-            return JsonSerializer.Deserialize<AppConfig>(txt, JsonOpts) ?? new AppConfig();
+            return JsonSerializer.Deserialize(txt, TailSlapJsonContext.Default.AppConfig)
+                ?? new AppConfig();
         }
         catch (Exception ex)
         {
@@ -109,7 +160,10 @@ public sealed class ConfigService : IConfigService
         {
             if (!Directory.Exists(Dir))
                 Directory.CreateDirectory(Dir);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, JsonOpts));
+            File.WriteAllText(
+                FilePath,
+                JsonSerializer.Serialize(cfg, TailSlapJsonContext.Default.AppConfig)
+            );
         }
         catch (Exception ex)
         {

@@ -30,6 +30,7 @@ public class MainForm : Form
     private readonly IClipboardService _clip;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
+    private readonly IHistoryService _history;
 
     private uint _currentMods;
     private uint _currentVk;
@@ -44,7 +45,8 @@ public class MainForm : Form
         IConfigService config,
         IClipboardService clip,
         ITextRefinerFactory textRefinerFactory,
-        IRemoteTranscriberFactory remoteTranscriberFactory
+        IRemoteTranscriberFactory remoteTranscriberFactory,
+        IHistoryService history
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -53,6 +55,7 @@ public class MainForm : Form
             ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _remoteTranscriberFactory = remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+        _history = history ?? throw new ArgumentNullException(nameof(history));
 
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
@@ -100,7 +103,7 @@ public class MainForm : Form
             {
                 try
                 {
-                    using var hf = new HistoryForm();
+                    using var hf = new HistoryForm(_history);
                     hf.ShowDialog();
                 }
                 catch
@@ -116,7 +119,7 @@ public class MainForm : Form
             {
                 try
                 {
-                    using var hf = new TranscriptionHistoryForm();
+                    using var hf = new TranscriptionHistoryForm(_history);
                     hf.ShowDialog();
                 }
                 catch
@@ -191,6 +194,18 @@ public class MainForm : Form
         Logger.Log(
             $"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Transcriber hotkey mods={_transcriberMods}, key={_transcriberVk}"
         );
+
+        _config.ConfigChanged += () =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(ReloadConfigFromDisk));
+            }
+            else
+            {
+                ReloadConfigFromDisk();
+            }
+        };
     }
 
     private Icon[] LoadAnimationFrames()
@@ -780,6 +795,52 @@ public class MainForm : Form
         }
     }
 
+    private void ReloadConfigFromDisk()
+    {
+        try
+        {
+            Logger.Log("Detected config file change on disk. Reloading...");
+            var newConfig = _config.LoadOrDefault();
+
+            // Check if hotkeys changed
+            bool refinementHotkeyChanged =
+                newConfig.Hotkey.Modifiers != _currentMods || newConfig.Hotkey.Key != _currentVk;
+            bool transcriberHotkeyChanged =
+                newConfig.TranscriberHotkey.Modifiers != _transcriberMods
+                || newConfig.TranscriberHotkey.Key != _transcriberVk;
+            bool transcriberStatusChanged =
+                newConfig.Transcriber.Enabled != _currentConfig.Transcriber.Enabled;
+
+            _currentConfig = newConfig;
+
+            if (refinementHotkeyChanged)
+            {
+                UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
+                _currentMods = _currentConfig.Hotkey.Modifiers;
+                _currentVk = _currentConfig.Hotkey.Key;
+                RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+            }
+
+            if (transcriberHotkeyChanged || transcriberStatusChanged)
+            {
+                UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+                if (_currentConfig.Transcriber.Enabled)
+                {
+                    _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+                    _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+                    RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+                }
+            }
+
+            NotificationService.ShowInfo("Configuration reloaded from disk.");
+            Logger.Log("Configuration hot-reload complete.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Error during config hot-reload: {ex.Message}");
+        }
+    }
+
     private async Task RefineSelectionAsync()
     {
         try
@@ -851,7 +912,7 @@ public class MainForm : Form
 
             try
             {
-                HistoryService.Append(text, refined, _currentConfig.Llm.Model);
+                _history.Append(text, refined, _currentConfig.Llm.Model);
             }
             catch { }
             Logger.Log("Refinement completed successfully.");
@@ -1062,7 +1123,7 @@ public class MainForm : Form
             // Log transcription to history (separate from LLM refinement history)
             try
             {
-                HistoryService.AppendTranscription(
+                _history.AppendTranscription(
                     transcriptionText,
                     recordingStats?.DurationMs ?? 0
                 );
@@ -1169,11 +1230,13 @@ public class MainForm : Form
 
     private static string Sha256Hex(string s)
     {
+        if (string.IsNullOrEmpty(s))
+            return "";
         try
         {
-            using var sha = SHA256.Create();
-            var bytes = Encoding.UTF8.GetBytes(s);
-            var hash = sha.ComputeHash(bytes);
+            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
+            Span<byte> hash = stackalloc byte[32];
+            SHA256.HashData(inputBytes, hash);
             return Convert.ToHexString(hash);
         }
         catch

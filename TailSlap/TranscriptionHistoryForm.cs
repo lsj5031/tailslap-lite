@@ -12,9 +12,11 @@ public sealed class TranscriptionHistoryForm : Form
     private Button _refreshButton;
     private System.Windows.Forms.Timer? _refreshTimer;
     private DateTime _lastRefresh;
+    private readonly IHistoryService _history;
 
-    public TranscriptionHistoryForm()
+    public TranscriptionHistoryForm(IHistoryService history)
     {
+        _history = history ?? throw new ArgumentNullException(nameof(history));
         Text = "Encrypted Transcription History";
         StartPosition = FormStartPosition.CenterScreen;
         Width = 900;
@@ -99,7 +101,7 @@ public sealed class TranscriptionHistoryForm : Form
                     ) == DialogResult.Yes
                 )
                 {
-                    HistoryService.ClearAll();
+                    _history.ClearAll();
                     SafePopulate();
                     NotificationService.ShowSuccess("Encrypted transcription history cleared.");
                 }
@@ -167,7 +169,7 @@ public sealed class TranscriptionHistoryForm : Form
 
     private void Populate()
     {
-        var items = HistoryService.ReadAllTranscriptions();
+        var items = _history.ReadAllTranscriptions();
         _list.BeginUpdate();
         _list.Items.Clear();
 
@@ -219,7 +221,7 @@ public sealed class TranscriptionHistoryForm : Form
     {
         try
         {
-            var items = HistoryService.ReadAllTranscriptions();
+            var items = _history.ReadAllTranscriptions();
             int idx = _list.SelectedIndex;
             if (idx < 0 || idx >= items.Count)
                 return;
@@ -264,7 +266,7 @@ public sealed class TranscriptionHistoryForm : Form
     {
         try
         {
-            int currentCount = HistoryService.ReadAllTranscriptions().Count;
+            int currentCount = _history.ReadAllTranscriptions().Count;
             if (currentCount != _list.Items.Count)
             {
                 SafePopulate();

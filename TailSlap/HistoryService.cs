@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 
-public static class HistoryService
+public sealed class HistoryService : IHistoryService
 {
     private static string Dir =>
         Path.Combine(
@@ -16,20 +16,6 @@ public static class HistoryService
         Path.Combine(Dir, "transcription-history.jsonl.encrypted");
     private const int MaxEntries = 50;
 
-    public sealed class Entry
-    {
-        public DateTime Timestamp { get; set; }
-        public string Model { get; set; } = "";
-        public string OriginalCiphertext { get; set; } = "";
-        public string RefinedCiphertext { get; set; } = "";
-    }
-
-    public sealed class TranscriptionEntry
-    {
-        public DateTime Timestamp { get; set; }
-        public string TextCiphertext { get; set; } = "";
-        public int RecordingDurationMs { get; set; }
-    }
 
     private static string EncryptString(string plaintext)
     {
@@ -70,13 +56,13 @@ public static class HistoryService
         }
     }
 
-    public static void Append(string original, string refined, string model)
+    public void Append(string original, string refined, string model)
     {
         try
         {
             Directory.CreateDirectory(Dir);
 
-            var entry = new Entry
+            var entry = new HistoryEntry
             {
                 Timestamp = DateTime.Now,
                 Model = model, // Model name isn't sensitive
@@ -84,7 +70,8 @@ public static class HistoryService
                 RefinedCiphertext = EncryptString(refined),
             };
 
-            File.AppendAllText(FilePath, JsonSerializer.Serialize(entry) + Environment.NewLine);
+            var line = JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry);
+            File.AppendAllText(FilePath, line + Environment.NewLine);
             Trim();
         }
         catch (Exception ex)
@@ -100,7 +87,7 @@ public static class HistoryService
         }
     }
 
-    public static List<(
+    public List<(
         DateTime Timestamp,
         string Model,
         string Original,
@@ -113,13 +100,24 @@ public static class HistoryService
             if (!File.Exists(FilePath))
                 return result;
 
-            foreach (var line in File.ReadAllLines(FilePath))
+            using var stream = new FileStream(
+                FilePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite
+            );
+            using var reader = new StreamReader(stream);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
             {
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
                 try
                 {
-                    var entry = JsonSerializer.Deserialize<Entry>(line);
+                    var entry = JsonSerializer.Deserialize(
+                        line,
+                        TailSlapJsonContext.Default.HistoryEntry
+                    );
                     if (entry != null)
                     {
                         var decryptedOriginal = DecryptString(entry.OriginalCiphertext);
@@ -154,7 +152,7 @@ public static class HistoryService
         return result;
     }
 
-    private static void Trim()
+    private void Trim()
     {
         try
         {
@@ -163,21 +161,28 @@ public static class HistoryService
                 return;
 
             var trimmed = all.GetRange(all.Count - MaxEntries, MaxEntries);
-            var lines = new List<string>();
+
+            using var stream = new FileStream(
+                FilePath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None
+            );
+            using var writer = new StreamWriter(stream);
 
             foreach (var (timestamp, model, original, refined) in trimmed)
             {
-                var entry = new Entry
+                var entry = new HistoryEntry
                 {
                     Timestamp = timestamp,
                     Model = model,
                     OriginalCiphertext = EncryptString(original),
                     RefinedCiphertext = EncryptString(refined),
                 };
-                lines.Add(JsonSerializer.Serialize(entry));
+                writer.WriteLine(
+                    JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry)
+                );
             }
-
-            File.WriteAllLines(FilePath, lines);
         }
         catch (Exception ex)
         {
@@ -192,23 +197,24 @@ public static class HistoryService
         }
     }
 
-    public static void AppendTranscription(string text, int recordingDurationMs)
+    public void AppendTranscription(string text, int recordingDurationMs)
     {
         try
         {
             Directory.CreateDirectory(Dir);
 
-            var entry = new TranscriptionEntry
+            var entry = new TranscriptionHistoryEntry
             {
                 Timestamp = DateTime.Now,
                 TextCiphertext = EncryptString(text),
                 RecordingDurationMs = recordingDurationMs,
             };
 
-            File.AppendAllText(
-                TranscriptionFilePath,
-                JsonSerializer.Serialize(entry) + Environment.NewLine
+            var line = JsonSerializer.Serialize(
+                entry,
+                TailSlapJsonContext.Default.TranscriptionHistoryEntry
             );
+            File.AppendAllText(TranscriptionFilePath, line + Environment.NewLine);
             TrimTranscriptions();
         }
         catch (Exception ex)
@@ -224,7 +230,7 @@ public static class HistoryService
         }
     }
 
-    public static List<(
+    public List<(
         DateTime Timestamp,
         string Text,
         int RecordingDurationMs
@@ -236,13 +242,24 @@ public static class HistoryService
             if (!File.Exists(TranscriptionFilePath))
                 return result;
 
-            foreach (var line in File.ReadAllLines(TranscriptionFilePath))
+            using var stream = new FileStream(
+                TranscriptionFilePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite
+            );
+            using var reader = new StreamReader(stream);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
             {
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
                 try
                 {
-                    var entry = JsonSerializer.Deserialize<TranscriptionEntry>(line);
+                    var entry = JsonSerializer.Deserialize(
+                        line,
+                        TailSlapJsonContext.Default.TranscriptionHistoryEntry
+                    );
                     if (entry != null)
                     {
                         var decryptedText = DecryptString(entry.TextCiphertext);
@@ -273,7 +290,7 @@ public static class HistoryService
         return result;
     }
 
-    private static void TrimTranscriptions()
+    private void TrimTranscriptions()
     {
         try
         {
@@ -282,20 +299,30 @@ public static class HistoryService
                 return;
 
             var trimmed = all.GetRange(all.Count - MaxEntries, MaxEntries);
-            var lines = new List<string>();
+
+            using var stream = new FileStream(
+                TranscriptionFilePath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None
+            );
+            using var writer = new StreamWriter(stream);
 
             foreach (var (timestamp, text, duration) in trimmed)
             {
-                var entry = new TranscriptionEntry
+                var entry = new TranscriptionHistoryEntry
                 {
                     Timestamp = timestamp,
                     TextCiphertext = EncryptString(text),
                     RecordingDurationMs = duration,
                 };
-                lines.Add(JsonSerializer.Serialize(entry));
+                writer.WriteLine(
+                    JsonSerializer.Serialize(
+                        entry,
+                        TailSlapJsonContext.Default.TranscriptionHistoryEntry
+                    )
+                );
             }
-
-            File.WriteAllLines(TranscriptionFilePath, lines);
         }
         catch (Exception ex)
         {
@@ -310,7 +337,7 @@ public static class HistoryService
         }
     }
 
-    public static void ClearAll()
+    public void ClearAll()
     {
         try
         {
