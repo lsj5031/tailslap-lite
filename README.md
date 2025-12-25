@@ -10,11 +10,11 @@
 
 ## Features
 
-- **Text Refinement**: Process and enhance selected text with a hotkey
-- **Audio Transcription**: Record and transcribe audio from your microphone
+- **Text Refinement**: Process and enhance selected text with a hotkey (`Ctrl+Alt+R`)
+- **Audio Transcription**: Record and transcribe audio from your microphone (`Ctrl+Alt+T`)
 - **Clipboard Integration**: Automatically paste refined text back into your applications
-- **Customizable Hotkeys**: Set your preferred keyboard shortcut for text refinement and transcription
-- **History**: View and manage your refinement and transcription history
+- **Customizable Hotkeys**: Set your preferred keyboard shortcut via the Settings menu
+- **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
 - **System Tray Integration**: Runs quietly in the background
 - **Auto-start Option**: Launch on Windows startup
 
@@ -37,20 +37,19 @@
 3. The text will be processed and automatically pasted back (if enabled)
 
 ### Audio Transcription
-1. Press the transcription hotkey (configurable in Settings)
+1. Press the transcription hotkey (default: `Ctrl+Alt+T`)
 2. Record audio from your microphone
 3. The audio will be transcribed and available in your history
 
 ### System Tray Menu
 
 Right-click the TailSlap icon in the system tray to access:
-- **Refine Now**: Process the currently selected text immediately
-- **Transcribe Audio**: Start audio recording for transcription
-- **Auto Paste**: Toggle automatic pasting of refined text to your clipboard
-- **Change Hotkey**: Set a custom keyboard shortcut (interactive capture)
-- **Settings...**: Configure LLM endpoint, model, temperature, transcription settings, and other preferences
+- **Refine Now**: Process the currently selected text immediately (via clipboard)
+- **Transcribe Now**: Start audio recording for transcription
+- **Settings...**: Configure LLM endpoint, model, temperature, transcription settings, and hotkeys
 - **Open Logs...**: View application logs for debugging
-- **History...**: View and clear your refinement and transcription history
+- **Encrypted Refinement History...**: View and clear your refinement history
+- **Encrypted Transcription History...**: View and clear your transcription history
 - **Start with Windows**: Toggle automatic startup with Windows
 - **Quit**: Exit the application
 
@@ -60,6 +59,11 @@ Configuration is stored in a JSON file located at:
 `%APPDATA%\TailSlap\config.json`
 
 You can edit this file directly or use the Settings dialog in the system tray menu.
+
+## Privacy & Security
+- **End-to-End Encryption**: All history (refinement and transcription) is stored on disk using Windows DPAPI (user-scoped encryption). Only you can read your history.
+- **Sensitive Data**: API Keys are also encrypted with DPAPI.
+- **Logs**: Application logs are sanitized and do not contain sensitive text content (SHA256 fingerprints are logged instead).
 
 ## Logs
 

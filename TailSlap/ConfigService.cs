@@ -9,9 +9,9 @@ public sealed class AppConfig
     public bool AutoPaste { get; set; } = true;
     public bool UseClipboardFallback { get; set; } = true;
     public HotkeyConfig Hotkey { get; set; } =
-        new() { Modifiers = 0x0006, Key = (uint)Keys.OemSemicolon }; // Ctrl+Shift+; for LLM
+        new() { Modifiers = 0x0003, Key = (uint)Keys.R }; // Ctrl+Alt+R for LLM
     public HotkeyConfig TranscriberHotkey { get; set; } =
-        new() { Modifiers = 0x0006, Key = (uint)Keys.OemQuotes }; // Ctrl+Shift+' for Transcriber
+        new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
     public LlmConfig Llm { get; set; } = new();
     public TranscriberConfig Transcriber { get; set; } = new();
 
@@ -31,8 +31,8 @@ public sealed class AppConfig
 
 public sealed class HotkeyConfig
 {
-    public uint Modifiers { get; set; } = 0x0006; // CTRL + SHIFT
-    public uint Key { get; set; } = (uint)Keys.OemSemicolon;
+    public uint Modifiers { get; set; } = 0x0003; // CTRL + ALT
+    public uint Key { get; set; } = (uint)Keys.R;
 
     public HotkeyConfig Clone()
     {
@@ -330,8 +330,8 @@ public sealed class ConfigService : IConfigService, IDisposable
         // Default transcriber hotkey to Ctrl+Alt+T
         if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
         {
-            cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
-            cfg.TranscriberHotkey.Key = (uint)Keys.OemQuotes;
+            cfg.TranscriberHotkey.Modifiers = 0x0003; // CTRL + ALT
+            cfg.TranscriberHotkey.Key = (uint)Keys.T;
         }
 
         return cfg;

@@ -378,4 +378,10 @@ public sealed class HistoryService : IHistoryService
             );
         }
     }
+
+    public void ClearAll()
+    {
+        ClearRefinementHistory();
+        ClearTranscriptionHistory();
+    }
 }

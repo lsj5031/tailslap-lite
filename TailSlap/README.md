@@ -5,7 +5,11 @@ A Windows system tray application that refines text using AI-powered LLM service
 ## Features
 
 - **System Tray Application**: Runs minimized in the system tray
-- **Global Hotkey**: Press `Ctrl+Alt+R` to refine selected text
+- **Global Hotkeys**:
+  - `Ctrl+Alt+R`: Refine selected text
+  - `Ctrl+Alt+T`: Record and transcribe audio
+- **Audio Transcription**: Record microphone input and transcribe to text
+- **Encrypted History**: Securely stores refinement and transcription history
 - **Auto-Paste**: Automatically pastes refined text back (toggleable)
 - **Animation**: Visual feedback during LLM processing
 - **Encrypted API Keys**: API keys stored securely using Windows DPAPI
@@ -45,6 +49,16 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
     "ApiKeyEncrypted": null,
     "HttpReferer": null,
     "XTitle": null
+  },
+  "Transcriber": {
+    "Enabled": true,
+    "BaseUrl": "http://localhost:18000/v1/audio/transcriptions",
+    "Model": "glm-nano-2512",
+    "TimeoutSeconds": 30,
+    "AutoPaste": true,
+    "EnableVAD": false,
+    "SilenceThresholdMs": 1000,
+    "PreferredMicrophoneIndex": -1
   }
 }
 ```
@@ -69,15 +83,8 @@ Any OpenAI-compatible API:
 
 ### Setting API Key
 
-To set an API key, edit the config manually and add:
-```json
-"ApiKeyEncrypted": "base64-encrypted-value"
-```
-
-Or use code to encrypt:
-```csharp
-var key = Dpapi.Protect("your-api-key-here");
-```
+For security, **do not edit the config file manually** to set API keys.
+Please use the **Settings...** menu in the system tray, which will automatically encrypt your key using Windows DPAPI.
 
 ## Usage
 
@@ -91,8 +98,10 @@ var key = Dpapi.Protect("your-api-key-here");
 
 Right-click the tray icon for options:
 - **Refine Now**: Manually trigger refinement
-- **Auto Paste**: Toggle automatic pasting
-- **Change Hotkey**: Configure custom hotkey
+- **Transcribe Now**: Start audio transcription
+- **Settings...**: Configure hotkeys, models, and API keys
+- **Encrypted Refinement History...**: View refinement history
+- **Encrypted Transcription History...**: View transcription history
 - **Start with Windows**: Toggle auto-start
 - **Quit**: Exit application
 

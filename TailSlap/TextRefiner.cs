@@ -61,7 +61,10 @@ public sealed class TextRefiner : ITextRefiner
         DiagnosticsEventSource.Log.RefinementStarted(_cfg.Model, text?.Length ?? 0);
         var startTime = DateTime.UtcNow;
 
-        var endpoint = Combine(_cfg.BaseUrl.TrimEnd('/'), "chat/completions");
+        var baseUrl = _cfg.BaseUrl.TrimEnd('/');
+        var endpoint = baseUrl.EndsWith("chat/completions", StringComparison.OrdinalIgnoreCase)
+            ? baseUrl
+            : Combine(baseUrl, "chat/completions");
         try
         {
             Logger.Log(

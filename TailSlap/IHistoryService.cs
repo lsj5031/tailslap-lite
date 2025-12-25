@@ -9,4 +9,5 @@ public interface IHistoryService
     List<(DateTime Timestamp, string Text, int RecordingDurationMs)> ReadAllTranscriptions();
     void ClearRefinementHistory();
     void ClearTranscriptionHistory();
+    void ClearAll();
 }
