@@ -12,6 +12,8 @@
 
 - **Text Refinement**: Process and enhance selected text with a hotkey (`Ctrl+Alt+R`)
 - **Audio Transcription**: Record and transcribe audio from your microphone (`Ctrl+Alt+T`)
+  - **Streaming Mode**: Type words as they are spoken (real-time feedback)
+  - **Voice Activity Detection**: Auto-stop recording after silence
 - **Clipboard Integration**: Automatically paste refined text back into your applications
 - **Customizable Hotkeys**: Set your preferred keyboard shortcut via the Settings menu
 - **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
@@ -40,6 +42,10 @@
 1. Press the transcription hotkey (default: `Ctrl+Alt+T`)
 2. Record audio from your microphone
 3. The audio will be transcribed and available in your history
+
+**Advanced Settings:**
+- Enable **Streaming Mode** in Settings to see text appear while you speak
+- Configure **Silence Detection** to automatically stop recording when you finish speaking
 
 ### System Tray Menu
 
