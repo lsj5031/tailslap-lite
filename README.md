@@ -12,17 +12,22 @@
 
 - **Text Refinement**: Process and enhance selected text with a hotkey (`Ctrl+Alt+R`)
 - **Audio Transcription**: Record and transcribe audio from your microphone (`Ctrl+Alt+T`)
-  - **Streaming Mode**: Type words as they are spoken (real-time feedback)
-  - **Voice Activity Detection**: Auto-stop recording after silence
+- **Real-time Streaming**: Type words as they are spoken with WebSocket streaming (`Ctrl+Alt+Y`)
+  - **Streaming Mode**: Real-time transcription via WebSocket connection
+  - **Voice Activity Detection**: Auto-stop recording after silence (configurable threshold)
+  - **Audio Format**: 16-bit mono, 16kHz WAV with optimized buffer management
 - **Clipboard Integration**: Automatically paste refined text back into your applications
-- **Customizable Hotkeys**: Set your preferred keyboard shortcut via the Settings menu
+- **Customizable Hotkeys**: Configure three hotkeys via Settings menu:
+  - Text Refinement: `Ctrl+Alt+R` (default)
+  - Audio Transcription: `Ctrl+Alt+T` (default) 
+  - Real-time Streaming: `Ctrl+Alt+Y` (default)
 - **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
 - **System Tray Integration**: Runs quietly in the background
 - **Auto-start Option**: Launch on Windows startup
 
 ## Installation
 
-1. Download TailSlap.exe from the [releases page](https://github.com/tailslap/TailSlap/releases)
+1. Download TailSlap.exe from the [releases page](https://github.com/lsj5031/tailslap-lite/releases)
 2. Run the executable directly (no installation needed)
 3. The application will start automatically and appear in your system tray
 
@@ -30,7 +35,11 @@
 
 - **Windows 10 or later**
 - **Internet connection** for LLM processing (local Ollama doesn't require internet)
-- **Real-time Backend**: [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker) is required for real-time streaming and SSE transcription
+### Real-time Backend Requirements
+- **WebSocket Streaming**: Requires WebSocket-compatible transcription service
+- **Default Endpoint**: `ws://localhost:18000/v1/audio/transcriptions/stream`
+- **Recommended**: [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker) for full streaming support
+- **Fallback**: Standard HTTP transcription also supported
 
 ## Usage
 
@@ -44,9 +53,17 @@
 2. Record audio from your microphone
 3. The audio will be transcribed and available in your history
 
+### Real-time Streaming Transcription
+1. Press the streaming hotkey (default: `Ctrl+Alt+Y`)
+2. Speak naturally - text appears in real-time via WebSocket connection
+3. Automatic silence detection stops recording when you pause speaking
+
 **Advanced Settings:**
-- Enable **Streaming Mode** in Settings to see text appear while you speak (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
-- Configure **Silence Detection** to automatically stop recording when you finish speaking
+- **Streaming Mode**: Enable WebSocket streaming for real-time feedback (requires WebSocket endpoint)
+- **WebSocket Endpoint**: Defaults to `ws://localhost:18000/v1/audio/transcriptions/stream`
+- **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
+- **Microphone Selection**: Choose preferred microphone device in Settings
+- **Buffer Management**: 500ms aggregation for optimal streaming performance
 
 ### System Tray Menu
 
@@ -67,10 +84,42 @@ Configuration is stored in a JSON file located at:
 
 You can edit this file directly or use the Settings dialog in the system tray menu.
 
+### Configuration Options
+
+#### LLM Configuration
+- `BaseUrl`: OpenAI-compatible endpoint (default: `http://localhost:11434/v1`)
+- `Model`: Model name (default: `llama3.1`)
+- `Temperature`: Sampling temperature (default: `0.2`)
+- `MaxTokens`: Maximum response tokens (optional)
+- `ApiKey`: Encrypted API key for cloud services
+- `HttpReferer`, `XTitle`: Optional HTTP headers
+
+#### Transcription Configuration
+- `BaseUrl`: Transcription endpoint (default: `http://localhost:18000/v1/audio/transcriptions`)
+- `Model`: Transcription model (default: `glm-nano-2512`)
+- `ApiKey`: Encrypted API key (optional)
+- `TimeoutSeconds`: Request timeout (default: `30`)
+- `AutoPaste`: Automatically paste transcription results (default: `true`)
+- `EnableVAD`: Voice Activity Detection (default: `true`)
+- `SilenceThresholdMs`: Silence detection threshold in milliseconds (default: `2000`)
+- `PreferredMicrophoneIndex`: Microphone device selection (default: `-1` for system default)
+- `StreamResults`: Enable WebSocket streaming (default: `false`)
+- `WebSocketUrl`: Auto-constructed WebSocket endpoint for streaming
+
+#### Hotkey Configuration
+- `Hotkey`: Text refinement hotkey (default: `Ctrl+Alt+R`)
+- `TranscriberHotkey`: Audio transcription hotkey (default: `Ctrl+Alt+T`)
+- `StreamingTranscriberHotkey`: Real-time streaming hotkey (default: `Ctrl+Alt+Y`)
+
+#### General Settings
+- `AutoPaste`: Auto-paste refined text (default: `true`)
+- `UseClipboardFallback`: Use Ctrl+C fallback when clipboard capture fails (default: `true`)
+
 ## Privacy & Security
-- **End-to-End Encryption**: All history (refinement and transcription) is stored on disk using Windows DPAPI (user-scoped encryption). Only you can read your history.
-- **Sensitive Data**: API Keys are also encrypted with DPAPI.
-- **Logs**: Application logs are sanitized and do not contain sensitive text content (SHA256 fingerprints are logged instead).
+- **End-to-End Encryption**: All history (refinement and transcription) is stored on disk using Windows DPAPI with `DataProtectionScope.CurrentUser`. Only the current Windows user can decrypt data.
+- **API Key Protection**: All API keys encrypted with DPAPI using user-scoped protection.
+- **Secure Logging**: Application logs use SHA256 fingerprints instead of sensitive text content. No plaintext user data is logged.
+- **Graceful Degradation**: Encryption failures fall back safely without crashing the application.
 
 ## Logs
 
@@ -85,13 +134,31 @@ TailSlap uses a smooth 8-frame animated icon during text processing:
 |---------|---------|---------|---------|---------|---------|---------|---------|
 | ![Frame1](TailSlap/Icons/1.png) | ![Frame2](TailSlap/Icons/2.png) | ![Frame3](TailSlap/Icons/3.png) | ![Frame4](TailSlap/Icons/4.png) | ![Frame5](TailSlap/Icons/5.png) | ![Frame6](TailSlap/Icons/6.png) | ![Frame7](TailSlap/Icons/7.png) | ![Frame8](TailSlap/Icons/8.png) |
 
-The animation cycles through all 8 frames with pulsing tray text ("TailSlap - Processing...") during LLM requests to give you smooth visual feedback.
+The animation cycles through all 8 frames at 75ms intervals with pulsing tray text ("TailSlap - Processing...") during LLM requests to give you smooth visual feedback. Tooltip pulses every 300ms with up to 3 dots.
 
 ## Building from Source
-2. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-3. Publish: `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
 
-Output: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe` (~80MB, no runtime required)
+### Prerequisites
+1. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+
+### Build Commands
+```bash
+# Build release version
+dotnet build -c Release
+
+# Publish self-contained single file
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+```
+
+**Output**: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
+
+**Technology Stack**: 
+- .NET 9 with Windows Forms and WPF support
+- Dependency Injection with Microsoft.Extensions.DependencyInjection
+- HTTP Client Factory with connection pooling and compression
+- Windows DPAPI for encryption
+- WinMM API for audio recording
+- WebSocket client for real-time streaming
 
 See [AGENTS.md](AGENTS.md) for detailed architecture and development guidelines.
 
@@ -109,16 +176,16 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/tailslap/TailSlap/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/tailslap/TailSlap/discussions)
+- **Issues**: [GitHub Issues](https://github.com/lsj5031/tailslap-lite/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/lsj5031/tailslap-lite/discussions)
 - **Logs**: Check `%APPDATA%\TailSlap\app.log` for debugging
 
 ## Build Status
 
-![Build](https://github.com/tailslap/TailSlap/actions/workflows/build.yml/badge.svg)
+![Build](https://github.com/lsj5031/tailslap-lite/actions/workflows/build.yml/badge.svg)
 
 All commits and pull requests are automatically built and tested via GitHub Actions.
 
 ## Acknowledgments
 
-Built with [.NET 9](https://dotnet.microsoft.com/) and [Windows Forms](https://docs.microsoft.com/windows-forms/)
+Built with [.NET 9](https://dotnet.microsoft.com/), [Windows Forms](https://docs.microsoft.com/windows-forms/), and [WPF](https://docs.microsoft.com/wpf/)

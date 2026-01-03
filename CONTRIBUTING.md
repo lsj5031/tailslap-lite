@@ -10,7 +10,7 @@ Be respectful, inclusive, and constructive in all interactions.
 
 ### Reporting Issues
 
-1. Check existing [issues](https://github.com/yourusername/TailSlap/issues) to avoid duplicates
+1. Check existing [issues](https://github.com/lsj5031/tailslap-lite/issues) to avoid duplicates
 2. Include a clear description and steps to reproduce
 3. Share your environment: Windows version, .NET runtime version, LLM provider used
 4. Attach logs from `%APPDATA%\TailSlap\app.log` if relevant
@@ -30,8 +30,11 @@ Be respectful, inclusive, and constructive in all interactions.
 
 3. **Test your changes**:
    ```bash
+   # Build release version
    dotnet build -c Release
-   dotnet publish -c Release
+   
+   # Publish self-contained single file
+   dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
    ```
    Then run the published exe and verify the feature works
 
@@ -61,21 +64,31 @@ Be respectful, inclusive, and constructive in all interactions.
 
 ## Areas for Contribution
 
-- **Features**: New LLM provider integrations, UI improvements, history management
-- **Bug fixes**: Issues in clipboard handling, hotkey registration, error handling
+- **Features**: New LLM provider integrations, UI improvements, history management, real-time streaming enhancements
+- **Bug fixes**: Issues in clipboard handling, hotkey registration, error handling, WebSocket connectivity
 - **Documentation**: Improving README, config examples, troubleshooting guides
 - **Testing**: Feedback on different Windows versions and LLM providers
+- **Performance**: Audio buffer optimization, HTTP client tuning, animation smoothness
+- **Security**: Encryption improvements, logging sanitization, API key management
 
 ## Architecture Overview
 
 See [AGENTS.md](AGENTS.md) for detailed architecture, build commands, and code conventions.
 
 Key components:
-- `MainForm.cs` - Tray UI and hotkey handling
-- `TextRefiner.cs` - OpenAI-compatible LLM HTTP client
-- `ConfigService.cs` - JSON configuration management
-- `ClipboardService.cs` - Windows clipboard integration
+- `MainForm.cs` - Tray UI, hotkey handling, and real-time streaming coordination
+- `TextRefiner.cs` - OpenAI-compatible LLM HTTP client with retry logic
+- `RemoteTranscriber.cs` - HTTP-based transcription client
+- `RealtimeTranscriber.cs` - WebSocket-based real-time streaming client
+- `ConfigService.cs` - JSON configuration management with validation
+- `ClipboardService.cs` - Windows clipboard integration with fallback mechanisms
+- `AudioRecorder.cs` - WinMM-based audio recording with VAD
+- `HistoryService.cs` - Encrypted history management with DPAPI
 - `AutoStartService.cs` - Windows startup registry handling
+- `NotificationService.cs` - Balloon tip notification system
+- `Dpapi.cs` - Windows DPAPI encryption wrapper
+- `Logger.cs` - File logging with SHA256 fingerprinting
+- `DiagnosticsEventSource.cs` - ETW-based diagnostics and performance monitoring
 
 ## Questions?
 
