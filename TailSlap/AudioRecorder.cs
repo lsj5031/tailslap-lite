@@ -722,11 +722,11 @@ public sealed class AudioRecorder : IDisposable
                     Logger.Log(
                         $"AudioRecorder.StartStreamingAsync: Silence detected ({consecutiveSilenceMs}ms >= {silenceThresholdMs}ms), stopping"
                     );
-                    
+
                     // Fire event but DON'T stop immediately here, let the caller decide or let the event handler handle it.
                     // However, our return value is 'true' meaning silence detected.
                     // We should break loop to stop recording locally.
-                    
+
                     OnSilenceDetected?.Invoke();
                     break;
                 }
@@ -754,13 +754,13 @@ public sealed class AudioRecorder : IDisposable
     private const int VAD_RMS_THRESHOLD = 120; // Used for standard recording
     private const int VAD_ACTIVATION_THRESHOLD = 900; // Used for streaming (start) - needs clear speech above ambient
     private const int VAD_SUSTAIN_THRESHOLD = 550; // Used for streaming (continue) - lowered to 550 (very close to noise floor)
-    
+
     // Debug: track buffer processing stats
     private int _totalBuffersProcessed = 0;
     private int _buffersWithSpeech = 0;
     private int _buffersWithSilence = 0;
     private DateTime _lastBufferTime = DateTime.MinValue;
-    
+
     private bool ProcessStreamingBuffers(
         bool enableVAD,
         ref int consecutiveSilenceMs,
@@ -770,7 +770,7 @@ public sealed class AudioRecorder : IDisposable
     {
         int buffersProcessedThisCall = 0;
         var now = DateTime.Now;
-        
+
         for (int i = 0; i < BUFFER_COUNT; i++)
         {
             try
@@ -782,7 +782,7 @@ public sealed class AudioRecorder : IDisposable
                 {
                     buffersProcessedThisCall++;
                     _totalBuffersProcessed++;
-                    
+
                     byte[] data = new byte[_waveHeaders[i].dwBytesRecorded];
                     Marshal.Copy(
                         _waveHeaders[i].lpData,
@@ -797,20 +797,24 @@ public sealed class AudioRecorder : IDisposable
                     {
                         float rms = CalculateRMS(data);
                         int bufferDurationMs = data.Length / BYTES_PER_MS;
-                        
+
                         // DEBUG: Only log every 20th buffer to reduce noise (1 second of audio)
                         if (_totalBuffersProcessed % 20 == 0)
                         {
                             string speechState = hasDetectedSpeech ? "ACTIVE" : "WAITING";
-                            int threshold = hasDetectedSpeech ? VAD_SUSTAIN_THRESHOLD : VAD_ACTIVATION_THRESHOLD;
-                            Logger.Log($"VAD[DEBUG]: buf#{_totalBuffersProcessed} RMS={rms:F0} thresh={threshold} state={speechState} silence={consecutiveSilenceMs}ms");
+                            int threshold = hasDetectedSpeech
+                                ? VAD_SUSTAIN_THRESHOLD
+                                : VAD_ACTIVATION_THRESHOLD;
+                            Logger.Log(
+                                $"VAD[DEBUG]: buf#{_totalBuffersProcessed} RMS={rms:F0} thresh={threshold} state={speechState} silence={consecutiveSilenceMs}ms"
+                            );
                         }
-                        
+
                         // Hysteresis Logic:
                         // 1. To START detecting speech, RMS must exceed ACTIVATION threshold (ignoring background noise)
                         // 2. To CONTINUE detecting speech, RMS must exceed SUSTAIN threshold (catching softer speech endings)
                         // 3. Otherwise, accumulate silence
-                        
+
                         bool isSpeech = false;
                         if (!hasDetectedSpeech)
                         {
@@ -818,7 +822,9 @@ public sealed class AudioRecorder : IDisposable
                             {
                                 isSpeech = true;
                                 _buffersWithSpeech++;
-                                Logger.Log($"VAD[Stream]: *** Speech ACTIVATED *** (RMS={rms:F0} > {VAD_ACTIVATION_THRESHOLD})");
+                                Logger.Log(
+                                    $"VAD[Stream]: *** Speech ACTIVATED *** (RMS={rms:F0} > {VAD_ACTIVATION_THRESHOLD})"
+                                );
                             }
                         }
                         else
@@ -830,7 +836,9 @@ public sealed class AudioRecorder : IDisposable
                                 // Log when silence was being accumulated
                                 if (consecutiveSilenceMs > 0)
                                 {
-                                     Logger.Log($"VAD[Stream]: Speech SUSTAINED (RMS={rms:F0} > {VAD_SUSTAIN_THRESHOLD}), silence reset from {consecutiveSilenceMs}ms");
+                                    Logger.Log(
+                                        $"VAD[Stream]: Speech SUSTAINED (RMS={rms:F0} > {VAD_SUSTAIN_THRESHOLD}), silence reset from {consecutiveSilenceMs}ms"
+                                    );
                                 }
                             }
                             else
@@ -850,18 +858,20 @@ public sealed class AudioRecorder : IDisposable
                             if (hasDetectedSpeech)
                             {
                                 consecutiveSilenceMs += bufferDurationMs;
-                                
+
                                 // Log every 500ms of silence accumulation
-                                if (consecutiveSilenceMs % 500 < bufferDurationMs) 
+                                if (consecutiveSilenceMs % 500 < bufferDurationMs)
                                 {
                                     Logger.Log(
                                         $"VAD[Stream]: Silence milestone: {consecutiveSilenceMs}ms / {silenceThresholdMs}ms (speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed})"
                                     );
                                 }
-                                
+
                                 if (consecutiveSilenceMs >= silenceThresholdMs)
                                 {
-                                    Logger.Log($"VAD[Stream]: *** THRESHOLD REACHED *** Stopping. Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}");
+                                    Logger.Log(
+                                        $"VAD[Stream]: *** THRESHOLD REACHED *** Stopping. Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
+                                    );
                                     return true;
                                 }
                             }
@@ -874,7 +884,7 @@ public sealed class AudioRecorder : IDisposable
                         _waveHeaders[i].dwBytesRecorded = 0;
                         // Clear only the DONE flag (0x01), keep PREPARED flag (0x02)
                         _waveHeaders[i].dwFlags &= ~0x01u;
-                        
+
                         int addResult = waveInAddBuffer(
                             _hWaveIn,
                             ref _waveHeaders[i],
@@ -882,7 +892,9 @@ public sealed class AudioRecorder : IDisposable
                         );
                         if (addResult != 0)
                         {
-                            Logger.Log($"VAD[ERROR]: waveInAddBuffer failed for buffer {i}, error={addResult}, flags=0x{_waveHeaders[i].dwFlags:X}");
+                            Logger.Log(
+                                $"VAD[ERROR]: waveInAddBuffer failed for buffer {i}, error={addResult}, flags=0x{_waveHeaders[i].dwFlags:X}"
+                            );
                         }
                     }
                 }
@@ -892,7 +904,7 @@ public sealed class AudioRecorder : IDisposable
                 Logger.Log($"VAD[ERROR]: Exception processing buffer {i}: {ex.Message}");
             }
         }
-        
+
         // Log if no buffers were ready (potential audio capture issue)
         if (buffersProcessedThisCall == 0 && _totalBuffersProcessed > 0)
         {
@@ -902,12 +914,12 @@ public sealed class AudioRecorder : IDisposable
                 Logger.Log($"VAD[WARN]: No buffers ready! Gap since last buffer: {gap:F0}ms");
             }
         }
-        
+
         if (buffersProcessedThisCall > 0)
         {
             _lastBufferTime = now;
         }
-        
+
         return false;
     }
 

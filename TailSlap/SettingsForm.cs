@@ -28,6 +28,7 @@ public sealed class SettingsForm : Form
     // Transcriber controls
     private CheckBox? _transcriberEnabled;
     private CheckBox? _transcriberAutoPaste;
+    private CheckBox? _transcriberStreamResults;
     private TextBox? _transcriberBaseUrl;
     private TextBox? _transcriberModel;
     private TextBox? _transcriberTimeout;
@@ -37,6 +38,8 @@ public sealed class SettingsForm : Form
     private Button? _captureTranscriberHotkeyButton;
     private Button? _testTranscriberConnectionButton;
     private Button? _detectMicrophonesButton;
+    private CheckBox? _transcriberEnableVAD;
+    private TextBox? _transcriberSilenceThreshold;
 
     public SettingsForm(
         AppConfig cfg,
@@ -387,13 +390,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = new Padding(16),
-            RowCount = 11,
+            RowCount = 14,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 11; i++)
+        for (int i = 0; i < 14; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
@@ -505,6 +508,64 @@ public sealed class SettingsForm : Form
         );
         transcriber.Controls.Add(_transcriberAutoPaste, 1, 5);
 
+        _transcriberStreamResults = new CheckBox
+        {
+            Text = "Type words as they arrive (after recording)",
+            Checked = _cfg.Transcriber.StreamResults,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Stream Results",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            6
+        );
+        transcriber.Controls.Add(_transcriberStreamResults, 1, 6);
+
+        _transcriberEnableVAD = new CheckBox
+        {
+            Text = "Auto-stop recording after silence",
+            Checked = _cfg.Transcriber.EnableVAD,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Silence Detection",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            7
+        );
+        transcriber.Controls.Add(_transcriberEnableVAD, 1, 7);
+
+        _transcriberSilenceThreshold = new TextBox
+        {
+            Text = _cfg.Transcriber.SilenceThresholdMs.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Silence Timeout (ms)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            8
+        );
+        transcriber.Controls.Add(_transcriberSilenceThreshold, 1, 8);
+
         _microphoneDropdown = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -527,9 +588,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            6
+            9
         );
-        transcriber.Controls.Add(_microphoneDropdown, 1, 6);
+        transcriber.Controls.Add(_microphoneDropdown, 1, 9);
 
         _detectMicrophonesButton = new Button
         {
@@ -538,7 +599,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _detectMicrophonesButton!.Click += DetectMicrophones;
-        transcriber.Controls.Add(_detectMicrophonesButton, 1, 7);
+        transcriber.Controls.Add(_detectMicrophonesButton, 1, 10);
 
         _transcriberHotkey = new TextBox
         {
@@ -555,9 +616,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            8
+            11
         );
-        transcriber.Controls.Add(_transcriberHotkey, 1, 8);
+        transcriber.Controls.Add(_transcriberHotkey, 1, 11);
 
         _captureTranscriberHotkeyButton = new Button
         {
@@ -566,7 +627,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
-        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 9);
+        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 12);
 
         _testTranscriberConnectionButton = new Button
         {
@@ -584,9 +645,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            10
+            13
         );
-        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 10);
+        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 13);
 
         return transcriber;
     }
@@ -652,6 +713,14 @@ public sealed class SettingsForm : Form
             ? _cfg.Transcriber.ApiKey
             : transcriberKey;
         _cfg.Transcriber.AutoPaste = _transcriberAutoPaste!.Checked;
+        _cfg.Transcriber.StreamResults = _transcriberStreamResults!.Checked;
+        _cfg.Transcriber.EnableVAD = _transcriberEnableVAD!.Checked;
+        if (
+            int.TryParse(_transcriberSilenceThreshold!.Text.Trim(), out var silenceMs)
+            && silenceMs >= 500
+            && silenceMs <= 10000
+        )
+            _cfg.Transcriber.SilenceThresholdMs = silenceMs;
         _cfg.Transcriber.PreferredMicrophoneIndex =
             _microphoneDropdown!.SelectedIndex >= 0 ? _microphoneDropdown.SelectedIndex : -1;
     }
@@ -934,6 +1003,7 @@ public sealed class SettingsForm : Form
             _transcriberTimeout!.Text = defaultCfg.Transcriber.TimeoutSeconds.ToString();
             _transcriberApiKey!.Text = "";
             _transcriberAutoPaste!.Checked = defaultCfg.Transcriber.AutoPaste;
+            _transcriberStreamResults!.Checked = defaultCfg.Transcriber.StreamResults;
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex

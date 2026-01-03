@@ -1150,6 +1150,19 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
+    public async System.Threading.Tasks.Task<bool> SetTextAndPasteAsync(string text)
+    {
+        // Optimized method to set text and paste in one go, saving/restoring clipboard if possible
+        // Note: For real-time typing, we might skip saving original clipboard to be faster,
+        // or we just overwrite it because the user intends to paste this text.
+        // Given this is for dictation, overwriting clipboard is acceptable behavior (like Nuance Dragon).
+
+        if (!SetText(text))
+            return false;
+
+        return await PasteAsync();
+    }
+
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()
     {
         // Try multiple paste methods in order of reliability

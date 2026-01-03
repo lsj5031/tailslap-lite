@@ -10,4 +10,5 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(TranscriptionHistoryEntry))]
 [JsonSerializable(typeof(ChatRequest))]
 [JsonSerializable(typeof(ChatResponse))]
+[JsonSerializable(typeof(RealtimeTranscriptionMessage))]
 internal partial class TailSlapJsonContext : JsonSerializerContext { }

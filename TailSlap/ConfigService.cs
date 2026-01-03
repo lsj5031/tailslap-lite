@@ -11,6 +11,8 @@ public sealed class AppConfig
     public HotkeyConfig Hotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.R }; // Ctrl+Alt+R for LLM
     public HotkeyConfig TranscriberHotkey { get; set; } =
         new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
+    public HotkeyConfig StreamingTranscriberHotkey { get; set; } =
+        new() { Modifiers = 0x0003, Key = (uint)Keys.Y }; // Ctrl+Alt+Y for Streaming Transcriber
     public LlmConfig Llm { get; set; } = new();
     public TranscriberConfig Transcriber { get; set; } = new();
 
@@ -22,6 +24,7 @@ public sealed class AppConfig
             UseClipboardFallback = UseClipboardFallback,
             Hotkey = Hotkey.Clone(),
             TranscriberHotkey = TranscriberHotkey.Clone(),
+            StreamingTranscriberHotkey = StreamingTranscriberHotkey.Clone(),
             Llm = Llm.Clone(),
             Transcriber = Transcriber.Clone(),
         };
@@ -82,9 +85,10 @@ public sealed class TranscriberConfig
     public string? ApiKeyEncrypted { get; set; } = null;
     public int TimeoutSeconds { get; set; } = 30;
     public bool AutoPaste { get; set; } = true;
-    public bool EnableVAD { get; set; } = false;
-    public int SilenceThresholdMs { get; set; } = 1000;
+    public bool EnableVAD { get; set; } = true;
+    public int SilenceThresholdMs { get; set; } = 2000;
     public int PreferredMicrophoneIndex { get; set; } = -1;
+    public bool StreamResults { get; set; } = false;
 
     [JsonIgnore]
     public string? ApiKey
@@ -92,6 +96,28 @@ public sealed class TranscriberConfig
         get => string.IsNullOrEmpty(ApiKeyEncrypted) ? null : Dpapi.Unprotect(ApiKeyEncrypted);
         set =>
             ApiKeyEncrypted = string.IsNullOrWhiteSpace(value) ? null : Dpapi.Protect(value.Trim());
+    }
+
+    [JsonIgnore]
+    public string WebSocketUrl
+    {
+        get
+        {
+            if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var baseUri))
+            {
+                return "ws://localhost:18000/v1/audio/transcriptions/stream";
+            }
+
+            var builder = new UriBuilder(baseUri);
+            builder.Scheme = builder.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
+            
+            // Ensure path ends with /stream
+            // If BaseUrl is .../transcriptions, this becomes .../transcriptions/stream
+            var path = builder.Path.TrimEnd('/');
+            builder.Path = path + "/stream";
+            
+            return builder.ToString();
+        }
     }
 
     public TranscriberConfig Clone()
@@ -107,6 +133,7 @@ public sealed class TranscriberConfig
             EnableVAD = EnableVAD,
             SilenceThresholdMs = SilenceThresholdMs,
             PreferredMicrophoneIndex = PreferredMicrophoneIndex,
+            StreamResults = StreamResults,
         };
     }
 }
@@ -323,7 +350,7 @@ public sealed class ConfigService : IConfigService, IDisposable
 
         if (!IsValidSilenceThreshold(cfg.Transcriber.SilenceThresholdMs))
         {
-            cfg.Transcriber.SilenceThresholdMs = 1000;
+            cfg.Transcriber.SilenceThresholdMs = 2000;
         }
 
         // Default transcriber hotkey to Ctrl+Alt+T

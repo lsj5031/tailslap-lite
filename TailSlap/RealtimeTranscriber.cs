@@ -8,13 +8,16 @@ using System.Threading.Tasks;
 
 public sealed class RealtimeTranscriber : IDisposable
 {
+    private readonly record struct QueueItem(byte[]? Audio, bool IsStop);
+
     private readonly string _wsEndpoint;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _connectionCts;
     private Task? _receiveTask;
     private Task? _sendTask;
-    // Channel stores either byte[] (audio) or string (control message)
-    private Channel<object>? _sendChannel;
+
+    // Channel stores QueueItem to ensure type safety and ordering
+    private Channel<QueueItem>? _sendChannel;
     private bool _disposed;
     private int _chunksSent = 0;
     private int _chunksSkipped = 0;
@@ -50,21 +53,23 @@ public sealed class RealtimeTranscriber : IDisposable
             Logger.Log($"RealtimeTranscriber: Connecting to {_wsEndpoint}");
             await _ws.ConnectAsync(new Uri(_wsEndpoint), ct).ConfigureAwait(false);
             Logger.Log("RealtimeTranscriber: Connected successfully");
-            
+
             _chunksSent = 0;
             _chunksSkipped = 0;
-            
+
             _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            
+
             // Create bounded channel (drop oldest if full) to handle backpressure
-            // Using object to support both byte[] (audio) and string (control) to ensure ordering
-            _sendChannel = Channel.CreateBounded<object>(new BoundedChannelOptions(100) 
-            { 
-                FullMode = BoundedChannelFullMode.DropOldest,
-                SingleReader = true,
-                SingleWriter = false
-            });
-            
+            // Using QueueItem struct to avoid boxing
+            _sendChannel = Channel.CreateBounded<QueueItem>(
+                new BoundedChannelOptions(100)
+                {
+                    FullMode = BoundedChannelFullMode.DropOldest,
+                    SingleReader = true,
+                    SingleWriter = false,
+                }
+            );
+
             _receiveTask = ReceiveLoopAsync(_connectionCts.Token);
             _sendTask = SendLoopAsync(_connectionCts.Token);
 
@@ -105,10 +110,7 @@ public sealed class RealtimeTranscriber : IDisposable
         }
     }
 
-    public Task SendAudioChunkAsync(
-        ArraySegment<byte> pcm16Data,
-        CancellationToken ct = default
-    )
+    public Task SendAudioChunkAsync(ArraySegment<byte> pcm16Data, CancellationToken ct = default)
     {
         if (_disposed || _sendChannel == null)
             return Task.CompletedTask;
@@ -119,8 +121,8 @@ public sealed class RealtimeTranscriber : IDisposable
             // Note: ArraySegment is a struct pointing to buffer. We must copy it because
             // the buffer might be reused by AudioRecorder before SendLoop reads it.
             byte[] dataCopy = pcm16Data.ToArray();
-            
-            if (!_sendChannel.Writer.TryWrite((object)dataCopy))
+
+            if (!_sendChannel.Writer.TryWrite(new QueueItem(dataCopy, false)))
             {
                 // Should not happen with DropOldest, but good safety
                 Interlocked.Increment(ref _chunksSkipped);
@@ -135,7 +137,8 @@ public sealed class RealtimeTranscriber : IDisposable
 
     private async Task SendLoopAsync(CancellationToken ct)
     {
-        if (_sendChannel == null) return;
+        if (_sendChannel == null)
+            return;
 
         try
         {
@@ -145,27 +148,29 @@ public sealed class RealtimeTranscriber : IDisposable
                 {
                     if (_ws?.State == WebSocketState.Open)
                     {
-                        try 
+                        try
                         {
-                            if (item is byte[] chunk)
-                            {
-                                await _ws.SendAsync(
-                                    new ArraySegment<byte>(chunk),
-                                    WebSocketMessageType.Binary,
-                                    endOfMessage: true,
-                                    ct
-                                ).ConfigureAwait(false);
-                                Interlocked.Increment(ref _chunksSent);
-                            }
-                            else if (item is string cmd && cmd == "STOP")
+                            if (item.IsStop)
                             {
                                 var stopMsg = Encoding.UTF8.GetBytes("{\"action\":\"stop\"}");
                                 await _ws.SendAsync(
-                                    new ArraySegment<byte>(stopMsg),
-                                    WebSocketMessageType.Text,
-                                    endOfMessage: true,
-                                    ct
-                                ).ConfigureAwait(false);
+                                        new ArraySegment<byte>(stopMsg),
+                                        WebSocketMessageType.Text,
+                                        endOfMessage: true,
+                                        ct
+                                    )
+                                    .ConfigureAwait(false);
+                            }
+                            else if (item.Audio != null)
+                            {
+                                await _ws.SendAsync(
+                                        new ArraySegment<byte>(item.Audio),
+                                        WebSocketMessageType.Binary,
+                                        endOfMessage: true,
+                                        ct
+                                    )
+                                    .ConfigureAwait(false);
+                                Interlocked.Increment(ref _chunksSent);
                             }
                         }
                         catch (Exception ex)
@@ -202,17 +207,15 @@ public sealed class RealtimeTranscriber : IDisposable
         try
         {
             Logger.Log("RealtimeTranscriber: Sending silence padding and stop signal");
-            
+
             // Send silence padding via channel to maintain order
             var silence = new byte[32000]; // 1s silence
             if (_sendChannel != null)
             {
-                await _sendChannel.Writer.WriteAsync((object)silence, ct).ConfigureAwait(false);
-                
+                await _sendChannel.Writer.WriteAsync(new QueueItem(silence, false), ct).ConfigureAwait(false);
+
                 // Send stop command via channel
-                // We use a special string marker or just the raw bytes?
-                // Channel is object. String is easier to detect in loop.
-                await _sendChannel.Writer.WriteAsync((object)"STOP", ct).ConfigureAwait(false);
+                await _sendChannel.Writer.WriteAsync(new QueueItem(null, true), ct).ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -324,7 +327,9 @@ public sealed class RealtimeTranscriber : IDisposable
         }
         finally
         {
-            Logger.Log($"RealtimeTranscriber: ReceiveLoop ended. Stats: sent={_chunksSent}, skipped={_chunksSkipped}");
+            Logger.Log(
+                $"RealtimeTranscriber: ReceiveLoop ended. Stats: sent={_chunksSent}, skipped={_chunksSkipped}"
+            );
             OnDisconnected?.Invoke();
         }
     }

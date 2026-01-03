@@ -897,8 +897,8 @@ public class MainForm : Form
                 NotificationService.ShowError($"Real-time transcription failed: {ex.Message}");
             }
             catch { }
-            
-            // Only clean up here on error. 
+
+            // Only clean up here on error.
             // Normal stop flow is handled by StopRealtimeStreamingAsync to allow for final transcription wait.
             await CleanupRealtimeStreamingAsync();
         }
@@ -925,9 +925,11 @@ public class MainForm : Form
                 {
                     var dataToSend = _streamingBuffer.ToArray();
                     _streamingBuffer.Clear();
-                    
+
                     // Fire-and-forget sending the aggregated chunk
-                    _ = _realtimeTranscriber.SendAudioChunkAsync(new ArraySegment<byte>(dataToSend));
+                    _ = _realtimeTranscriber.SendAudioChunkAsync(
+                        new ArraySegment<byte>(dataToSend)
+                    );
                 }
             }
         }
@@ -959,7 +961,7 @@ public class MainForm : Form
             // Server behavior: Each partial is the CUMULATIVE transcription of all audio so far.
             // The server refines its transcription over time, so later partials may correct earlier ones.
             // We track what we've typed and update accordingly.
-            
+
             if (!isFinal)
             {
                 // Calculate common prefix to determine what needs to change
@@ -978,21 +980,24 @@ public class MainForm : Form
                 // assume the server started a new sentence/segment.
                 if (commonPrefixLen < 5 && _lastTypedLength > 10)
                 {
-                    Logger.Log($"HandleRT: New segment detected (overlap {commonPrefixLen}). Committing previous.");
+                    Logger.Log(
+                        $"HandleRT: New segment detected (overlap {commonPrefixLen}). Committing previous."
+                    );
                     _realtimeTranscriptionText = text;
                     _lastTypedLength = 0;
-                    
+
                     // Insert a space separator for the new segment
-                    TypeTextDirectly(" "); 
-                    
+                    TypeTextDirectly(" ");
+
                     // Proceed to type the new text as if it's fresh
                     if (text.Length > 0)
                     {
                         Logger.Log($"HandleRT: Typing new segment: {text.Length} chars");
-                        if (text.Length > 5) 
+                        if (text.Length > 5)
                         {
-                             bool pasteSuccess = await _clip.SetTextAndPasteAsync(text);
-                             if (!pasteSuccess) TypeTextDirectly(text);
+                            bool pasteSuccess = await _clip.SetTextAndPasteAsync(text);
+                            if (!pasteSuccess)
+                                TypeTextDirectly(text);
                         }
                         else
                         {
@@ -1007,10 +1012,10 @@ public class MainForm : Form
                 // and wait (to avoid massive backspacing/typing loops on unstable transcriptions)
                 // UNLESS we haven't typed much yet
                 int backspaceCount = _lastTypedLength - commonPrefixLen;
-                
+
                 // Only apply incremental updates if we don't have to backspace too much
                 // or if we are just appending
-                if (backspaceCount >= 0 && backspaceCount < 10) 
+                if (backspaceCount >= 0 && backspaceCount < 10)
                 {
                     if (backspaceCount > 0)
                     {
@@ -1018,27 +1023,27 @@ public class MainForm : Form
                         SendBackspace(backspaceCount);
                         _lastTypedLength = commonPrefixLen;
                         // Small delay to ensure backspaces process
-                        await Task.Delay(5); 
+                        await Task.Delay(20);
                     }
 
                     if (text.Length > _lastTypedLength)
                     {
                         var newText = text.Substring(_lastTypedLength);
                         Logger.Log($"HandleRT: Typing {newText.Length} chars");
-                        
-                        if (newText.Length > 5) 
+
+                        if (newText.Length > 5)
                         {
-                             bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
-                             if (!pasteSuccess)
-                             {
-                                 TypeTextDirectly(newText);
-                             }
+                            bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
+                            if (!pasteSuccess)
+                            {
+                                TypeTextDirectly(newText);
+                            }
                         }
                         else
                         {
                             TypeTextDirectly(newText);
                         }
-                        
+
                         _lastTypedLength = text.Length;
                     }
                     _realtimeTranscriptionText = text;
@@ -1047,7 +1052,9 @@ public class MainForm : Form
                 {
                     // Correction is too large/unstable, just update baseline but don't type
                     // We'll catch up on the next stable update or final
-                    Logger.Log($"HandleRT: Large correction detected (backspace {backspaceCount}), updating baseline only");
+                    Logger.Log(
+                        $"HandleRT: Large correction detected (backspace {backspaceCount}), updating baseline only"
+                    );
                     _realtimeTranscriptionText = text;
                 }
             }
@@ -1055,7 +1062,7 @@ public class MainForm : Form
             {
                 // For final: apply the complete corrected text
                 Logger.Log($"OnRealtimeTranscription: Final transcription received");
-                
+
                 // Calculate what needs to change
                 int commonPrefixLen = 0;
                 int minLen = Math.Min(_realtimeTranscriptionText.Length, text.Length);
@@ -1072,28 +1079,28 @@ public class MainForm : Form
                 {
                     SendBackspace(backspaceCount);
                     _lastTypedLength = commonPrefixLen;
-                    await Task.Delay(5); 
+                    await Task.Delay(20);
                 }
 
                 if (text.Length > _lastTypedLength)
                 {
                     var newText = text.Substring(_lastTypedLength);
-                    if (newText.Length > 5) 
+                    if (newText.Length > 5)
                     {
-                         bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
-                         if (!pasteSuccess)
-                         {
-                             TypeTextDirectly(newText);
-                         }
+                        bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
+                        if (!pasteSuccess)
+                        {
+                            TypeTextDirectly(newText);
+                        }
                     }
                     else
                     {
                         TypeTextDirectly(newText);
                     }
                 }
-                
+
                 // Reset for next utterance
-                _lastTypedLength = 0; 
+                _lastTypedLength = 0;
                 _realtimeTranscriptionText = "";
             }
         }
@@ -1105,18 +1112,19 @@ public class MainForm : Form
 
     private void SendBackspace(int count)
     {
-        if (count <= 0) return;
-        
+        if (count <= 0)
+            return;
+
         // Batch backspaces if there are many to avoid slow UI
         // But SendKeys "{BS 5}" syntax is cleaner
-        try 
+        try
         {
-             SendKeys.SendWait("{BS " + count + "}");
-             SendKeys.Flush();
+            SendKeys.SendWait("{BS " + count + "}");
+            SendKeys.Flush();
         }
         catch (Exception ex)
         {
-             Logger.Log($"SendBackspace failed: {ex.Message}");
+            Logger.Log($"SendBackspace failed: {ex.Message}");
         }
     }
 
@@ -1172,20 +1180,21 @@ public class MainForm : Form
                 // Create completion sources to wait for server completion
                 var serverClosedTcs = new TaskCompletionSource<bool>();
                 var finalMessageTcs = new TaskCompletionSource<bool>();
-                
-                void OnServerDisconnected() 
+
+                void OnServerDisconnected()
                 {
                     serverClosedTcs.TrySetResult(true);
                 }
 
                 void OnTranscriptionReceived(string text, bool isFinal)
                 {
-                    if (isFinal) finalMessageTcs.TrySetResult(true);
+                    if (isFinal)
+                        finalMessageTcs.TrySetResult(true);
                 }
-                
+
                 _realtimeTranscriber.OnDisconnected += OnServerDisconnected;
                 _realtimeTranscriber.OnTranscription += OnTranscriptionReceived;
-                
+
                 // Flush any remaining audio buffer before stopping
                 byte[]? remainingData = null;
                 lock (_streamingBuffer)
@@ -1196,24 +1205,28 @@ public class MainForm : Form
                         _streamingBuffer.Clear();
                     }
                 }
-                
+
                 if (remainingData != null)
                 {
-                    await _realtimeTranscriber.SendAudioChunkAsync(new ArraySegment<byte>(remainingData));
+                    await _realtimeTranscriber.SendAudioChunkAsync(
+                        new ArraySegment<byte>(remainingData)
+                    );
                 }
-                
+
                 // Send stop signal and padding
                 await _realtimeTranscriber.StopAsync();
-                
-                Logger.Log("StopRealtimeStreamingAsync: Waiting for server to close connection or send final message...");
-                
+
+                Logger.Log(
+                    "StopRealtimeStreamingAsync: Waiting for server to close connection or send final message..."
+                );
+
                 // Wait for server to send final transcription OR close connection
                 // Give it up to 10 seconds (inference can be slow)
                 await Task.WhenAny(serverClosedTcs.Task, finalMessageTcs.Task, Task.Delay(10000));
-                
+
                 _realtimeTranscriber.OnDisconnected -= OnServerDisconnected;
                 _realtimeTranscriber.OnTranscription -= OnTranscriptionReceived;
-                
+
                 Logger.Log("StopRealtimeStreamingAsync: Wait complete or timed out");
             }
             catch (Exception ex)
@@ -1223,7 +1236,7 @@ public class MainForm : Form
         }
 
         _transcriberCts?.Cancel();
-        
+
         // Explicitly cleanup now that we've waited for the final message
         await CleanupRealtimeStreamingAsync();
     }
@@ -1271,31 +1284,37 @@ public class MainForm : Form
         // and to access updated text variables safely
         if (InvokeRequired)
         {
-            Invoke(new Action(async () =>
-            {
-                if (_realtimeTranscriptionText.Length > _lastTypedLength)
+            Invoke(
+                new Action(async () =>
                 {
-                    var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
-                    Logger.Log($"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars");
-                    
-                    if (remainingText.Length > 5)
+                    if (_realtimeTranscriptionText.Length > _lastTypedLength)
                     {
-                        await _clip.SetTextAndPasteAsync(remainingText);
+                        var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
+                        Logger.Log(
+                            $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
+                        );
+
+                        if (remainingText.Length > 5)
+                        {
+                            await _clip.SetTextAndPasteAsync(remainingText);
+                        }
+                        else
+                        {
+                            TypeTextDirectly(remainingText);
+                        }
                     }
-                    else
-                    {
-                        TypeTextDirectly(remainingText);
-                    }
-                }
-            }));
+                })
+            );
         }
         else
         {
             if (_realtimeTranscriptionText.Length > _lastTypedLength)
             {
                 var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
-                Logger.Log($"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars");
-                
+                Logger.Log(
+                    $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
+                );
+
                 if (remainingText.Length > 5)
                 {
                     await _clip.SetTextAndPasteAsync(remainingText);

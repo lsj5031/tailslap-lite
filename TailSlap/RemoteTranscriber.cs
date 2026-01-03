@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -186,16 +188,13 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             Logger.Log($"Transcription attempt {attemptNumber}/2");
             try
             {
-                var audioBytes = await File.ReadAllBytesAsync(audioFilePath, ct)
-                    .ConfigureAwait(false);
-                Logger.Log($"Read {audioBytes.Length} bytes from audio file");
-
                 using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
-
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
 
-                using var audioContent = new ByteArrayContent(audioBytes);
+                // Use FileStream for memory efficiency with large files
+                using var fileStream = new FileStream(audioFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+                using var audioContent = new StreamContent(fileStream);
                 audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
                     "audio/wav"
                 );
@@ -351,6 +350,290 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             TranscriberErrorType.Unknown,
             "Transcription failed after multiple retries"
         );
+    }
+
+    public async IAsyncEnumerable<string> TranscribeStreamingAsync(
+        string audioFilePath,
+        [EnumeratorCancellation] CancellationToken ct = default
+    )
+    {
+        if (!File.Exists(audioFilePath))
+        {
+            throw new FileNotFoundException($"Audio file not found: {audioFilePath}");
+        }
+
+        var fileInfo = new FileInfo(audioFilePath);
+        Logger.Log($"TranscribeStreamingAsync: file={audioFilePath}, size={fileInfo.Length} bytes");
+
+        using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+
+        // Use FileStream for memory efficiency
+        using var fileStream = new FileStream(audioFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+        using var audioContent = new StreamContent(fileStream);
+        audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "audio/wav"
+        );
+
+        using var formData = new MultipartFormDataContent();
+        formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
+
+        if (!string.IsNullOrEmpty(_config.Model))
+        {
+            formData.Add(new StringContent(_config.Model), "model");
+        }
+
+        // Request streaming response
+        formData.Add(new StringContent("true"), "stream");
+
+        Logger.Log($"Posting streaming request to {_config.BaseUrl}");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+        {
+            Content = formData,
+        };
+        if (!string.IsNullOrEmpty(_config.ApiKey))
+        {
+            request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
+        }
+
+        HttpResponseMessage? response = null;
+        try
+        {
+            response = await http.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeoutCts.Token
+                )
+                .ConfigureAwait(false);
+
+            Logger.Log(
+                $"Streaming response: HTTP {(int)response.StatusCode} {response.StatusCode}"
+            );
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorText = await response
+                    .Content.ReadAsStringAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
+                Logger.Log($"Streaming error response: {errorText}");
+                throw new TranscriberException(
+                    TranscriberErrorType.HttpError,
+                    $"Remote API returned error (HTTP {(int)response.StatusCode})",
+                    statusCode: (int)response.StatusCode,
+                    responseText: errorText.Length > 500 ? errorText.Substring(0, 500) : errorText
+                );
+            }
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+            Logger.Log($"Streaming content type: {contentType}");
+
+            // Check if response is actually streaming (SSE or chunked)
+            bool isStreaming =
+                contentType.Contains("text/event-stream")
+                || contentType.Contains("application/x-ndjson")
+                || response.Headers.TransferEncodingChunked == true;
+
+            if (!isStreaming)
+            {
+                // Server doesn't support streaming, fall back to reading full response
+                Logger.Log("Server returned non-streaming response, yielding full text");
+                var fullText = await response
+                    .Content.ReadAsStringAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
+                var text = ExtractTextFromResponseString(fullText);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    yield return text;
+                }
+                yield break;
+            }
+
+            // Read SSE stream
+            // Format: "data: <text>\n\n" for each chunk, "data: [DONE]" at end
+            using var stream = await response
+                .Content.ReadAsStreamAsync(timeoutCts.Token)
+                .ConfigureAwait(false);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+
+            string? line;
+
+            while (
+                (line = await reader.ReadLineAsync(timeoutCts.Token).ConfigureAwait(false)) != null
+            )
+            {
+                ct.ThrowIfCancellationRequested();
+
+                // Skip empty lines (SSE events are separated by \n\n)
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                // SSE format: "data: <plain text>"
+                if (line.StartsWith("data: ", StringComparison.Ordinal))
+                {
+                    var text = line.Substring(6); // "data: " is 6 chars
+
+                    // Check for stream end
+                    if (text == "[DONE]")
+                    {
+                        Logger.Log("Streaming completed with [DONE]");
+                        break;
+                    }
+
+                    // Check for error
+                    if (text.StartsWith("[Error:", StringComparison.Ordinal))
+                    {
+                        Logger.Log($"Streaming error: {text}");
+                        throw new TranscriberException(
+                            TranscriberErrorType.HttpError,
+                            text,
+                            responseText: text
+                        );
+                    }
+
+                    // Plain text chunk - yield directly
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        Logger.Log(
+                            $"Streaming chunk: {text.Substring(0, Math.Min(50, text.Length))}"
+                        );
+                        yield return text;
+                    }
+                }
+                // Also handle "data:" without space (just in case)
+                else if (line.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    var text = line.Substring(5).TrimStart();
+
+                    if (text == "[DONE]")
+                    {
+                        Logger.Log("Streaming completed with [DONE]");
+                        break;
+                    }
+
+                    if (text.StartsWith("[Error:", StringComparison.Ordinal))
+                    {
+                        Logger.Log($"Streaming error: {text}");
+                        throw new TranscriberException(
+                            TranscriberErrorType.HttpError,
+                            text,
+                            responseText: text
+                        );
+                    }
+
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        Logger.Log(
+                            $"Streaming chunk: {text.Substring(0, Math.Min(50, text.Length))}"
+                        );
+                        yield return text;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            response?.Dispose();
+        }
+    }
+
+    private static string ExtractTextFromStreamChunk(string jsonData)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonData);
+            var root = doc.RootElement;
+
+            // Try common streaming formats
+            // Format 1: { "text": "..." } or { "content": "..." }
+            foreach (var key in new[] { "text", "content", "transcription", "delta" })
+            {
+                if (
+                    root.TryGetProperty(key, out var textElement)
+                    && textElement.ValueKind == JsonValueKind.String
+                )
+                {
+                    return textElement.GetString() ?? "";
+                }
+            }
+
+            // Format 2: { "choices": [{ "delta": { "content": "..." } }] } (OpenAI style)
+            if (
+                root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+            )
+            {
+                foreach (var choice in choices.EnumerateArray())
+                {
+                    if (
+                        choice.TryGetProperty("delta", out var delta)
+                        && delta.ValueKind == JsonValueKind.Object
+                    )
+                    {
+                        if (
+                            delta.TryGetProperty("content", out var content)
+                            && content.ValueKind == JsonValueKind.String
+                        )
+                        {
+                            return content.GetString() ?? "";
+                        }
+                        if (
+                            delta.TryGetProperty("text", out var text)
+                            && text.ValueKind == JsonValueKind.String
+                        )
+                        {
+                            return text.GetString() ?? "";
+                        }
+                    }
+                    // Also check direct text in choice
+                    if (
+                        choice.TryGetProperty("text", out var choiceText)
+                        && choiceText.ValueKind == JsonValueKind.String
+                    )
+                    {
+                        return choiceText.GetString() ?? "";
+                    }
+                }
+            }
+
+            // Format 3: { "result": { "text": "..." } }
+            if (
+                root.TryGetProperty("result", out var result)
+                && result.ValueKind == JsonValueKind.Object
+            )
+            {
+                if (
+                    result.TryGetProperty("text", out var resultText)
+                    && resultText.ValueKind == JsonValueKind.String
+                )
+                {
+                    return resultText.GetString() ?? "";
+                }
+            }
+
+            return "";
+        }
+        catch (JsonException)
+        {
+            return "";
+        }
+    }
+
+    private static string ExtractTextFromResponseString(string responseText)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseText);
+            return ExtractTextFromResponse(doc.RootElement);
+        }
+        catch
+        {
+            return responseText;
+        }
     }
 
     private static string ExtractTextFromResponse(JsonElement response)
