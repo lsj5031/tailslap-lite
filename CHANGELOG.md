@@ -5,16 +5,45 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.3] - 2026-01-03
+## [Unreleased]
+
+### Review
+- Comprehensive codebase analysis and changelog generation based on actual implementation
+- Identified and documented all major features and architectural components
+- Updated changelog to reflect comprehensive feature set rather than misleading git history
+
+## [2.0.0] - 2026-01-05
+
+### Added
+- **Comprehensive AI-Assisted Clipboard Refinement**: Full OpenAI-compatible LLM integration with retry logic (2 attempts, 1s backoff)
+- **Remote Transcription System**: HTTP-based transcription with OpenAI-compatible API endpoints and multipart form data
+- **Real-time Streaming Transcription**: WebSocket-based bi-directional audio streaming with 500ms buffer aggregation
+- **Professional Audio Recording**: WinMM API integration with SafeHandle RAII for 16-bit mono, 16kHz WAV recording
+- **Voice Activity Detection (VAD)**: Configurable three-level thresholds (activation/sustain/silence) with 2s silence detection
+- **Triple Hotkey System**: Global hotkeys for refinement (Ctrl+Alt+R), transcription (Ctrl+Alt+T), and streaming (Ctrl+Alt+Y)
+- **System Tray Integration**: Hidden main form with animated 8-frame icon (75ms intervals) and pulsing tooltip
+- **Encrypted Configuration**: JSON config with Windows DPAPI encryption for API keys and FileSystemWatcher hot reloading
+- **Transcription History**: Encrypted JSONL storage with decryption status and clear functionality
+- **Settings UI**: Comprehensive settings form with LLM and Transcriber configuration tabs and validation
+- **Dependency Injection**: Microsoft.Extensions.DependencyInjection container with service registration
+- **HTTP Client Factory**: Centralized HTTP client with connection pooling, compression, and configurable timeouts
+- **ETW Diagnostics**: EventSource with 14 events across 7 diagnostic categories for performance monitoring
+- **Single-instance Architecture**: Mutex-based prevention of multiple app instances
+- **Windows Integration**: Registry-based startup integration and high DPI awareness (PerMonitorV2)
+- **Security Features**: SHA256 fingerprinting for secure logging and Windows DPAPI encryption
+- **Unit Testing**: xUnit framework with Moq for dependency mocking across core services
 
 ### Fixed
-- Real-time streaming: optimize memory usage and improve type safety
-- WebSocket streaming: stabilize transport logic and text synchronization
-- Voice Activity Detection: improve reliability and accuracy
-- Code formatting across multiple files for consistency
+- **Audio Recording Stability**: Proper WinMM error handling and device cleanup
+- **Clipboard Fallback**: Enhanced Ctrl+C fallback mechanism for clipboard capture failures
+- **Memory Management**: Optimized real-time streaming with proper buffer management
+- **Error Recovery**: Graceful degradation for encryption/decryption failures
 
 ### Changed
-- Updated documentation with real-time transcription and VAD details
+- **Architecture**: Modernized to .NET 9 with C# 12 nullable reference types
+- **Configuration**: Enhanced validation with static helper methods for URL, temperature, and model validation
+- **UI/UX**: Improved user feedback with balloon tip notifications and better error messages
+- **Code Style**: Applied consistent C# 12 formatting and naming conventions throughout
 
 ## [1.6.2] - 2025-12-25
 
