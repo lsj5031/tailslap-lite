@@ -27,12 +27,16 @@ public sealed class TranscriptionController : ITranscriptionController
         IClipboardService clip,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history)
+        IHistoryService history
+    )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _clip = clip ?? throw new ArgumentNullException(nameof(clip));
-        _remoteTranscriberFactory = remoteTranscriberFactory ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
-        _audioRecorderFactory = audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
+        _remoteTranscriberFactory =
+            remoteTranscriberFactory
+            ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+        _audioRecorderFactory =
+            audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
     }
 
@@ -43,7 +47,9 @@ public sealed class TranscriptionController : ITranscriptionController
         if (!cfg.Transcriber.Enabled)
         {
             Logger.Log("Transcriber is disabled");
-            NotificationService.ShowWarning("Remote transcription is disabled. Enable it in settings first.");
+            NotificationService.ShowWarning(
+                "Remote transcription is disabled. Enable it in settings first."
+            );
             return false;
         }
 
@@ -59,7 +65,9 @@ public sealed class TranscriptionController : ITranscriptionController
         if (_isTranscribing)
         {
             Logger.Log("Transcription already in progress - waiting for completion");
-            NotificationService.ShowWarning("Transcription in progress. Please wait for completion.");
+            NotificationService.ShowWarning(
+                "Transcription in progress. Please wait for completion."
+            );
             return false;
         }
 
@@ -106,7 +114,9 @@ public sealed class TranscriptionController : ITranscriptionController
         try
         {
             Logger.Log("TranscribeSelectionAsync started");
-            Logger.Log($"Transcriber config: BaseUrl={cfg.Transcriber.BaseUrl}, Model={cfg.Transcriber.Model}, Timeout={cfg.Transcriber.TimeoutSeconds}s");
+            Logger.Log(
+                $"Transcriber config: BaseUrl={cfg.Transcriber.BaseUrl}, Model={cfg.Transcriber.Model}, Timeout={cfg.Transcriber.TimeoutSeconds}s"
+            );
 
             _transcriberCts = new CancellationTokenSource();
             Logger.Log($"Created new CancellationTokenSource: {_transcriberCts?.GetHashCode()}");
@@ -114,7 +124,10 @@ public sealed class TranscriptionController : ITranscriptionController
             NotificationService.ShowInfo("🎤 Recording... Press hotkey again to stop.");
 
             // Record audio from microphone
-            audioFilePath = Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav");
+            audioFilePath = Path.Combine(
+                Path.GetTempPath(),
+                $"tailslap_recording_{Guid.NewGuid():N}.wav"
+            );
             Logger.Log($"Audio file path: {audioFilePath}");
 
             try
@@ -124,9 +137,13 @@ public sealed class TranscriptionController : ITranscriptionController
 
                 if (recordingStats.SilenceDetected)
                 {
-                    Logger.Log($"Audio recording stopped early due to silence detection at {recordingStats.DurationMs}ms");
+                    Logger.Log(
+                        $"Audio recording stopped early due to silence detection at {recordingStats.DurationMs}ms"
+                    );
                 }
-                Logger.Log($"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms");
+                Logger.Log(
+                    $"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms"
+                );
 
                 if (recordingStats.DurationMs < 500)
                 {
@@ -146,7 +163,9 @@ public sealed class TranscriptionController : ITranscriptionController
             }
             catch (Exception ex)
             {
-                NotificationService.ShowError("Failed to record audio from microphone. Please check your microphone permissions.");
+                NotificationService.ShowError(
+                    "Failed to record audio from microphone. Please check your microphone permissions."
+                );
                 Logger.Log($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
                 return;
             }
@@ -165,7 +184,11 @@ public sealed class TranscriptionController : ITranscriptionController
             }
             else
             {
-                transcriptionText = await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg);
+                transcriptionText = await TranscribeNonStreamingAsync(
+                    transcriber,
+                    audioFilePath,
+                    cfg
+                );
             }
 
             if (string.IsNullOrEmpty(transcriptionText))
@@ -175,7 +198,9 @@ public sealed class TranscriptionController : ITranscriptionController
             try
             {
                 _history.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
-                Logger.Log($"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms");
+                Logger.Log(
+                    $"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms"
+                );
             }
             catch (Exception ex)
             {
@@ -208,13 +233,16 @@ public sealed class TranscriptionController : ITranscriptionController
 
     private async Task<RecordingStats> RecordAudioAsync(string audioFilePath, AppConfig cfg)
     {
-        Logger.Log($"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms");
+        Logger.Log(
+            $"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms"
+        );
 
         using var recorder = _audioRecorderFactory.Create(cfg.Transcriber.PreferredMicrophoneIndex);
         recorder.SetVadThresholds(
             cfg.Transcriber.VadSilenceThreshold,
             cfg.Transcriber.VadActivationThreshold,
-            cfg.Transcriber.VadSustainThreshold);
+            cfg.Transcriber.VadSustainThreshold
+        );
 
         try
         {
@@ -224,9 +252,12 @@ public sealed class TranscriptionController : ITranscriptionController
                 maxDurationMs: 0,
                 ct: _transcriberCts?.Token ?? CancellationToken.None,
                 enableVAD: cfg.Transcriber.EnableVAD,
-                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs);
+                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
+            );
 
-            Logger.Log($"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}");
+            Logger.Log(
+                $"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}"
+            );
             return stats;
         }
         catch (OperationCanceledException)
@@ -236,7 +267,11 @@ public sealed class TranscriptionController : ITranscriptionController
         }
     }
 
-    private async Task<string> TranscribeStreamingAsync(IRemoteTranscriber transcriber, string audioFilePath, AppConfig cfg)
+    private async Task<string> TranscribeStreamingAsync(
+        IRemoteTranscriber transcriber,
+        string audioFilePath,
+        AppConfig cfg
+    )
     {
         Logger.Log("Using streaming transcription for faster feedback");
         var fullText = new System.Text.StringBuilder();
@@ -271,7 +306,9 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         catch (TranscriberException ex)
         {
-            Logger.Log($"Streaming TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}");
+            Logger.Log(
+                $"Streaming TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
+            );
             NotificationService.ShowError($"Transcription failed: {ex.Message}");
             return "";
         }
@@ -283,7 +320,11 @@ public sealed class TranscriptionController : ITranscriptionController
         }
     }
 
-    private async Task<string> TranscribeNonStreamingAsync(IRemoteTranscriber transcriber, string audioFilePath, AppConfig cfg)
+    private async Task<string> TranscribeNonStreamingAsync(
+        IRemoteTranscriber transcriber,
+        string audioFilePath,
+        AppConfig cfg
+    )
     {
         try
         {
@@ -311,7 +352,9 @@ public sealed class TranscriptionController : ITranscriptionController
                 bool pasteSuccess = await _clip.PasteAsync();
                 if (!pasteSuccess)
                 {
-                    NotificationService.ShowInfo("Transcription is ready. You can paste manually with Ctrl+V.");
+                    NotificationService.ShowInfo(
+                        "Transcription is ready. You can paste manually with Ctrl+V."
+                    );
                 }
             }
             else
@@ -323,7 +366,9 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         catch (TranscriberException ex)
         {
-            Logger.Log($"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}");
+            Logger.Log(
+                $"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
+            );
             NotificationService.ShowError($"Transcription failed: {ex.Message}");
             return "";
         }

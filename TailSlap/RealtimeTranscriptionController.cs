@@ -56,12 +56,15 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         IConfigService config,
         IClipboardService clip,
         IRealtimeTranscriberFactory transcriberFactory,
-        IAudioRecorderFactory audioRecorderFactory)
+        IAudioRecorderFactory audioRecorderFactory
+    )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _clip = clip ?? throw new ArgumentNullException(nameof(clip));
-        _transcriberFactory = transcriberFactory ?? throw new ArgumentNullException(nameof(transcriberFactory));
-        _audioRecorderFactory = audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
+        _transcriberFactory =
+            transcriberFactory ?? throw new ArgumentNullException(nameof(transcriberFactory));
+        _audioRecorderFactory =
+            audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
     }
 
     public async Task TriggerStreamingAsync()
@@ -71,16 +74,23 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         if (!cfg.Transcriber.Enabled)
         {
             Logger.Log("Transcriber is disabled");
-            NotificationService.ShowWarning("Remote transcription is disabled. Enable it in settings first.");
+            NotificationService.ShowWarning(
+                "Remote transcription is disabled. Enable it in settings first."
+            );
             return;
         }
 
         StreamingState currentState;
         lock (_streamingStateLock)
         {
-            if (_streamingState == StreamingState.Starting || _streamingState == StreamingState.Stopping)
+            if (
+                _streamingState == StreamingState.Starting
+                || _streamingState == StreamingState.Stopping
+            )
             {
-                Logger.Log($"TriggerStreamingAsync: Ignoring hotkey, transition in progress (state={_streamingState})");
+                Logger.Log(
+                    $"TriggerStreamingAsync: Ignoring hotkey, transition in progress (state={_streamingState})"
+                );
                 return;
             }
 
@@ -127,11 +137,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             await _realtimeTranscriber.ConnectAsync();
             Logger.Log("StartAsync: WebSocket connected");
 
-            _realtimeRecorder = _audioRecorderFactory.Create(cfg.Transcriber.PreferredMicrophoneIndex);
+            _realtimeRecorder = _audioRecorderFactory.Create(
+                cfg.Transcriber.PreferredMicrophoneIndex
+            );
             _realtimeRecorder.SetVadThresholds(
                 cfg.Transcriber.VadSilenceThreshold,
                 cfg.Transcriber.VadActivationThreshold,
-                cfg.Transcriber.VadSustainThreshold);
+                cfg.Transcriber.VadSustainThreshold
+            );
             _realtimeRecorder.OnAudioChunk += HandleRealtimeAudioChunk;
             _realtimeRecorder.OnSilenceDetected += HandleRealtimeSilenceDetected;
 
@@ -148,7 +161,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             await _realtimeRecorder.StartStreamingAsync(
                 _transcriberCts.Token,
                 enableVAD: cfg.Transcriber.EnableVAD,
-                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs);
+                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
+            );
         }
         catch (Exception ex)
         {
@@ -198,12 +212,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
                 if (remainingData != null)
                 {
-                    await _realtimeTranscriber.SendAudioChunkAsync(new ArraySegment<byte>(remainingData));
+                    await _realtimeTranscriber.SendAudioChunkAsync(
+                        new ArraySegment<byte>(remainingData)
+                    );
                 }
 
                 await _realtimeTranscriber.StopAsync();
 
-                Logger.Log("StopAsync: Waiting for server to close connection or send final message...");
+                Logger.Log(
+                    "StopAsync: Waiting for server to close connection or send final message..."
+                );
                 await Task.WhenAny(serverClosedTcs.Task, finalMessageTcs.Task, Task.Delay(10000));
 
                 _realtimeTranscriber.OnDisconnected -= OnServerDisconnected;
@@ -232,12 +250,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         if (state != StreamingState.Streaming)
             return;
 
-        if (_streamingStartTime != DateTime.MinValue
+        if (
+            _streamingStartTime != DateTime.MinValue
             && _realtimeTranscriptionText.Length == 0
             && _typedText.Length == 0
-            && (DateTime.UtcNow - _streamingStartTime).TotalSeconds >= NO_SPEECH_TIMEOUT_SECONDS)
+            && (DateTime.UtcNow - _streamingStartTime).TotalSeconds >= NO_SPEECH_TIMEOUT_SECONDS
+        )
         {
-            Logger.Log($"HandleRealtimeAudioChunk: No speech detected after {NO_SPEECH_TIMEOUT_SECONDS}s, triggering auto-stop");
+            Logger.Log(
+                $"HandleRealtimeAudioChunk: No speech detected after {NO_SPEECH_TIMEOUT_SECONDS}s, triggering auto-stop"
+            );
             _ = Task.Run(() => HandleRealtimeSilenceDetected());
             return;
         }
@@ -258,7 +280,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 {
                     var dataToSend = _streamingBuffer.ToArray();
                     _streamingBuffer.Clear();
-                    _ = _realtimeTranscriber.SendAudioChunkAsync(new ArraySegment<byte>(dataToSend));
+                    _ = _realtimeTranscriber.SendAudioChunkAsync(
+                        new ArraySegment<byte>(dataToSend)
+                    );
                 }
             }
         }
@@ -310,9 +334,10 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 return;
             }
 
-            string onScreen = _lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length
-                ? _realtimeTranscriptionText.Substring(0, _lastTypedLength)
-                : "";
+            string onScreen =
+                _lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length
+                    ? _realtimeTranscriptionText.Substring(0, _lastTypedLength)
+                    : "";
 
             int commonPrefixLen = 0;
             int minLen = Math.Min(onScreen.Length, text.Length);
@@ -330,7 +355,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             if (backspaceCount > 0)
             {
-                Logger.Log($"ProcessTranscriptionAsync: Backspacing {backspaceCount} chars for correction");
+                Logger.Log(
+                    $"ProcessTranscriptionAsync: Backspacing {backspaceCount} chars for correction"
+                );
                 SendBackspace(backspaceCount);
                 _lastTypedLength = commonPrefixLen;
                 await Task.Delay(20);
@@ -381,7 +408,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         var current = GetForegroundWindow();
         if (current != _streamingTargetWindow)
         {
-            Logger.Log($"IsForegroundWindowSafe: Window changed from 0x{_streamingTargetWindow:X} to 0x{current:X}");
+            Logger.Log(
+                $"IsForegroundWindowSafe: Window changed from 0x{_streamingTargetWindow:X} to 0x{current:X}"
+            );
             return false;
         }
         return true;
@@ -419,7 +448,18 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             var escaped = new System.Text.StringBuilder();
             foreach (char c in text)
             {
-                if (c == '+' || c == '^' || c == '%' || c == '~' || c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']')
+                if (
+                    c == '+'
+                    || c == '^'
+                    || c == '%'
+                    || c == '~'
+                    || c == '('
+                    || c == ')'
+                    || c == '{'
+                    || c == '}'
+                    || c == '['
+                    || c == ']'
+                )
                 {
                     escaped.Append('{').Append(c).Append('}');
                 }
@@ -427,9 +467,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 {
                     escaped.Append("{ENTER}");
                 }
-                else if (c == '\r')
-                {
-                }
+                else if (c == '\r') { }
                 else
                 {
                     escaped.Append(c);
@@ -609,7 +647,10 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 }
             }
 
-            if (!string.IsNullOrEmpty(finalTranscriptionText) || !string.IsNullOrEmpty(finalTypedText))
+            if (
+                !string.IsNullOrEmpty(finalTranscriptionText)
+                || !string.IsNullOrEmpty(finalTypedText)
+            )
             {
                 NotificationService.ShowSuccess("Real-time transcription complete.");
             }

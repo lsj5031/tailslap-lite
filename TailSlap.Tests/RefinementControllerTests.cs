@@ -57,7 +57,12 @@ public class RefinementControllerTests
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            new RefinementController(null!, mockClip.Object, mockRefinerFactory.Object, mockHistory.Object)
+            new RefinementController(
+                null!,
+                mockClip.Object,
+                mockRefinerFactory.Object,
+                mockHistory.Object
+            )
         );
     }
 
@@ -90,7 +95,8 @@ public class RefinementControllerTests
         // Arrange
         var mockConfig = CreateMockConfigService();
         var mockClip = new Mock<IClipboardService>();
-        mockClip.Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
+        mockClip
+            .Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
             .ReturnsAsync(string.Empty);
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
         var mockHistory = new Mock<IHistoryService>();
@@ -115,13 +121,15 @@ public class RefinementControllerTests
         // Arrange
         var mockConfig = CreateMockConfigService();
         var mockClip = new Mock<IClipboardService>();
-        mockClip.Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
+        mockClip
+            .Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
             .ReturnsAsync("test text");
         mockClip.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
         mockClip.Setup(c => c.PasteAsync()).ReturnsAsync(true);
 
         var mockRefiner = new Mock<ITextRefiner>();
-        mockRefiner.Setup(r => r.RefineAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockRefiner
+            .Setup(r => r.RefineAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("refined text");
 
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
@@ -155,13 +163,15 @@ public class RefinementControllerTests
         // Arrange
         var mockConfig = CreateMockConfigService();
         var mockClip = new Mock<IClipboardService>();
-        mockClip.Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
+        mockClip
+            .Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
             .ReturnsAsync("test text");
         mockClip.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
         mockClip.Setup(c => c.PasteAsync()).ReturnsAsync(true);
 
         var mockRefiner = new Mock<ITextRefiner>();
-        mockRefiner.Setup(r => r.RefineAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockRefiner
+            .Setup(r => r.RefineAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("refined text");
 
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();

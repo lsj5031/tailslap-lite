@@ -152,6 +152,8 @@ public static class Logger
 public sealed class LoggerServiceAdapter : ILoggerService
 {
     public void Log(string message) => Logger.Log(message);
+
     public void Flush() => Logger.Flush();
+
     public void Shutdown() => Logger.Shutdown();
 }

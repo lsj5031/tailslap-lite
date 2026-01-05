@@ -1,8 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using Moq;
-using Xunit;
 using TailSlap;
+using Xunit;
 
 public class TranscriptionControllerTests
 {

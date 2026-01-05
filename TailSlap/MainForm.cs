@@ -73,13 +73,22 @@ public class MainForm : Form
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _clip = clip ?? throw new ArgumentNullException(nameof(clip));
-        _textRefinerFactory = textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
-        _remoteTranscriberFactory = remoteTranscriberFactory ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+        _textRefinerFactory =
+            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory =
+            remoteTranscriberFactory
+            ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
-        _refinementController = refinementController ?? throw new ArgumentNullException(nameof(refinementController));
-        _transcriptionController = transcriptionController ?? throw new ArgumentNullException(nameof(transcriptionController));
-        _realtimeTranscriptionController = realtimeTranscriptionController ?? throw new ArgumentNullException(nameof(realtimeTranscriptionController));
-        _autoStartService = autoStartService ?? throw new ArgumentNullException(nameof(autoStartService));
+        _refinementController =
+            refinementController ?? throw new ArgumentNullException(nameof(refinementController));
+        _transcriptionController =
+            transcriptionController
+            ?? throw new ArgumentNullException(nameof(transcriptionController));
+        _realtimeTranscriptionController =
+            realtimeTranscriptionController
+            ?? throw new ArgumentNullException(nameof(realtimeTranscriptionController));
+        _autoStartService =
+            autoStartService ?? throw new ArgumentNullException(nameof(autoStartService));
 
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
@@ -114,7 +123,9 @@ public class MainForm : Form
         {
             _currentConfig.Llm.Enabled = _llmToggleItem.Checked;
             _config.Save(_currentConfig);
-            NotificationService.ShowInfo(_llmToggleItem.Checked ? "LLM refinement enabled." : "LLM refinement disabled.");
+            NotificationService.ShowInfo(
+                _llmToggleItem.Checked ? "LLM refinement enabled." : "LLM refinement disabled."
+            );
         };
         _menu.Items.Add(_llmToggleItem);
 
@@ -131,15 +142,31 @@ public class MainForm : Form
             if (_transcriberToggleItem.Checked)
             {
                 RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-                RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                RegisterHotkey(
+                    _streamingTranscriberMods,
+                    _streamingTranscriberVk,
+                    STREAMING_TRANSCRIBER_HOTKEY_ID
+                );
             }
             else
             {
-                try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
-                try { UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID); } catch { }
+                try
+                {
+                    UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+                }
+                catch { }
+                try
+                {
+                    UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                }
+                catch { }
             }
 
-            NotificationService.ShowInfo(_transcriberToggleItem.Checked ? "Transcription enabled." : "Transcription disabled.");
+            NotificationService.ShowInfo(
+                _transcriberToggleItem.Checked
+                    ? "Transcription enabled."
+                    : "Transcription disabled."
+            );
         };
         _menu.Items.Add(_transcriberToggleItem);
 
@@ -294,7 +321,9 @@ public class MainForm : Form
             var llmUrl = _currentConfig.Llm.BaseUrl.TrimEnd('/');
             var response = await httpClient.GetAsync(llmUrl + "/models");
             results.AppendLine($"  URL: {llmUrl}");
-            results.AppendLine($"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}");
+            results.AppendLine(
+                $"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}"
+            );
         }
         catch (Exception ex)
         {
@@ -311,7 +340,9 @@ public class MainForm : Form
             var transcriberUrl = _currentConfig.Transcriber.BaseUrl.TrimEnd('/');
             var response = await httpClient.GetAsync(transcriberUrl);
             results.AppendLine($"  URL: {transcriberUrl}");
-            results.AppendLine($"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}");
+            results.AppendLine(
+                $"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}"
+            );
         }
         catch (Exception ex)
         {
@@ -348,7 +379,9 @@ public class MainForm : Form
                 results.AppendLine("  Status: ✓ Available");
                 if (_currentConfig.Transcriber.PreferredMicrophoneIndex >= 0)
                 {
-                    results.AppendLine($"  Preferred device index: {_currentConfig.Transcriber.PreferredMicrophoneIndex}");
+                    results.AppendLine(
+                        $"  Preferred device index: {_currentConfig.Transcriber.PreferredMicrophoneIndex}"
+                    );
                 }
             }
             else
@@ -366,12 +399,23 @@ public class MainForm : Form
         results.AppendLine("Configuration:");
         results.AppendLine($"  LLM Enabled: {(_currentConfig.Llm.Enabled ? "Yes" : "No")}");
         results.AppendLine($"  LLM Model: {_currentConfig.Llm.Model}");
-        results.AppendLine($"  Transcription Enabled: {(_currentConfig.Transcriber.Enabled ? "Yes" : "No")}");
+        results.AppendLine(
+            $"  Transcription Enabled: {(_currentConfig.Transcriber.Enabled ? "Yes" : "No")}"
+        );
         results.AppendLine($"  Transcription Model: {_currentConfig.Transcriber.Model}");
-        results.AppendLine($"  VAD Enabled: {(_currentConfig.Transcriber.EnableVAD ? "Yes" : "No")}");
-        results.AppendLine($"  Streaming Enabled: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}");
+        results.AppendLine(
+            $"  VAD Enabled: {(_currentConfig.Transcriber.EnableVAD ? "Yes" : "No")}"
+        );
+        results.AppendLine(
+            $"  Streaming Enabled: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}"
+        );
 
-        MessageBox.Show(results.ToString(), "TailSlap Diagnostics", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show(
+            results.ToString(),
+            "TailSlap Diagnostics",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information
+        );
         Logger.Log("Diagnostics run:\n" + results.ToString());
     }
 
@@ -394,7 +438,9 @@ public class MainForm : Form
 
         if (list.Count > 0)
         {
-            Logger.Log($"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px");
+            Logger.Log(
+                $"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px"
+            );
             return list.ToArray();
         }
 
@@ -411,7 +457,9 @@ public class MainForm : Form
 
         if (list.Count > 0)
         {
-            Logger.Log($"Loaded {list.Count} animation frames (PNG) from embedded resources at {preferredSize}px");
+            Logger.Log(
+                $"Loaded {list.Count} animation frames (PNG) from embedded resources at {preferredSize}px"
+            );
             return list.ToArray();
         }
 
@@ -823,15 +871,31 @@ public class MainForm : Form
         if (_currentConfig.Transcriber.Enabled)
         {
             RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-            RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
+            RegisterHotkey(
+                _streamingTranscriberMods,
+                _streamingTranscriberVk,
+                STREAMING_TRANSCRIBER_HOTKEY_ID
+            );
         }
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
-        try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
-        try { UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID); } catch { }
+        try
+        {
+            UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
+            UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
+            UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
         base.OnHandleDestroyed(e);
     }
 
@@ -884,7 +948,9 @@ public class MainForm : Form
     {
         if (_isSettingsOpen)
         {
-            Logger.Log("Configuration change detected while Settings is open. Deferring hot-reload.");
+            Logger.Log(
+                "Configuration change detected while Settings is open. Deferring hot-reload."
+            );
             return;
         }
 
@@ -938,7 +1004,11 @@ public class MainForm : Form
                 {
                     _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
                     _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
-                    RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                    RegisterHotkey(
+                        _streamingTranscriberMods,
+                        _streamingTranscriberVk,
+                        STREAMING_TRANSCRIBER_HOTKEY_ID
+                    );
                 }
             }
 
@@ -1052,12 +1122,20 @@ public class MainForm : Form
                     $"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}"
                 );
 
-                try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
+                try
+                {
+                    UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
+                }
+                catch { }
                 _currentMods = _currentConfig.Hotkey.Modifiers;
                 _currentVk = _currentConfig.Hotkey.Key;
                 RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
 
-                try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
+                try
+                {
+                    UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+                }
+                catch { }
                 _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
                 _transcriberVk = _currentConfig.TranscriberHotkey.Key;
                 if (_currentConfig.Transcriber.Enabled)
@@ -1065,12 +1143,20 @@ public class MainForm : Form
                     RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
                 }
 
-                try { UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID); } catch { }
+                try
+                {
+                    UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                }
+                catch { }
                 _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
                 _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
                 if (_currentConfig.Transcriber.Enabled)
                 {
-                    RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                    RegisterHotkey(
+                        _streamingTranscriberMods,
+                        _streamingTranscriberVk,
+                        STREAMING_TRANSCRIBER_HOTKEY_ID
+                    );
                 }
 
                 NotificationService.ShowSuccess("Settings saved.");
