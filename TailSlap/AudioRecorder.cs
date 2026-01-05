@@ -461,20 +461,10 @@ public sealed class AudioRecorder : IDisposable
                             && !_hWaveIn.IsInvalid
                         )
                         {
+                            // Reset for reuse - keep WHDR_PREPARED flag (0x02), only clear WHDR_DONE (0x01)
+                            // Buffers are already prepared from initial setup, no need to re-prepare
                             _waveHeaders[i].dwBytesRecorded = 0;
-                            _waveHeaders[i].dwFlags = 0; // Reset flags
-                            int prepResult = waveInPrepareHeader(
-                                _hWaveIn,
-                                ref _waveHeaders[i],
-                                Marshal.SizeOf(typeof(WAVEHDR))
-                            );
-                            if (prepResult != 0)
-                            {
-                                Logger.Log(
-                                    $"AudioRecorder: waveInPrepareHeader FAILED for buffer {i}, error={prepResult}"
-                                );
-                                continue;
-                            }
+                            _waveHeaders[i].dwFlags &= ~0x01u; // Clear DONE flag, keep PREPARED
                             int addResult = waveInAddBuffer(
                                 _hWaveIn,
                                 ref _waveHeaders[i],

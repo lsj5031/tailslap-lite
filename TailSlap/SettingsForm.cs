@@ -59,10 +59,10 @@ public sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         MinimizeBox = true;
-        Width = 680;
-        Height = 560;
+        Width = DpiHelper.Scale(680);
+        Height = DpiHelper.Scale(560);
         AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = new Size(600, 500);
+        MinimumSize = new Size(DpiHelper.Scale(600), DpiHelper.Scale(500));
         SizeGripStyle = SizeGripStyle.Show;
         Icon = MainForm.LoadMainIcon();
 
@@ -73,12 +73,12 @@ public sealed class SettingsForm : Form
         {
             Dock = DockStyle.Top,
             ColumnCount = 2,
-            Padding = new Padding(16),
+            Padding = DpiHelper.Scale(new Padding(16)),
             RowCount = 2,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        general.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        general.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(110)));
         general.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -126,12 +126,12 @@ public sealed class SettingsForm : Form
         {
             Dock = DockStyle.Top,
             ColumnCount = 2,
-            Padding = new Padding(16),
+            Padding = DpiHelper.Scale(new Padding(16)),
             RowCount = 11,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(110)));
         llm.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int i = 0; i < 11; i++)
             llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -315,7 +315,7 @@ public sealed class SettingsForm : Form
             ForeColor = Color.Red,
             AutoSize = true,
             Dock = DockStyle.Bottom,
-            Padding = new Padding(10),
+            Padding = DpiHelper.Scale(new Padding(10)),
         };
         _resetButton = new Button
         {
@@ -340,7 +340,7 @@ public sealed class SettingsForm : Form
         {
             FlowDirection = FlowDirection.RightToLeft,
             Dock = DockStyle.Bottom,
-            Padding = new Padding(10),
+            Padding = DpiHelper.Scale(new Padding(10)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             WrapContents = false,
@@ -389,12 +389,12 @@ public sealed class SettingsForm : Form
         {
             Dock = DockStyle.Top,
             ColumnCount = 2,
-            Padding = new Padding(16),
+            Padding = DpiHelper.Scale(new Padding(16)),
             RowCount = 14,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int i = 0; i < 14; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));

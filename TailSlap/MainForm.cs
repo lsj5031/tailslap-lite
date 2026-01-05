@@ -1374,6 +1374,24 @@ public class MainForm : Form
             // Wait for any pending transcription processing to finish (e.g. final message)
             // This prevents race condition where cleanup runs before HandleRealtimeTranscription updates text
             await _transcriptionLock.WaitAsync();
+
+            // Capture text state WHILE holding the lock to prevent race with HandleRealtimeTranscription
+            string finalTranscriptionText = _realtimeTranscriptionText;
+            int finalLastTypedLength = _lastTypedLength;
+            string finalTypedText = _typedText;
+
+            // Reset state while holding lock
+            _typedText = "";
+            _realtimeTranscriptionText = "";
+            _lastTypedLength = 0;
+
+            // Set state to Idle BEFORE releasing lock so any pending HandleRealtimeTranscription
+            // calls will see Idle state and exit early when they acquire the lock
+            lock (_streamingStateLock)
+            {
+                _streamingState = StreamingState.Idle;
+            }
+
             _transcriptionLock.Release();
 
             // Take local snapshots, then null out fields to prevent other handlers from using them
@@ -1415,56 +1433,37 @@ public class MainForm : Form
             {
                 _streamingBuffer.Clear();
             }
-
-            lock (_streamingStateLock)
-            {
-                _streamingState = StreamingState.Idle;
-            }
             _streamingTargetWindow = IntPtr.Zero;
             _streamingStartTime = DateTime.MinValue;
             StopAnim();
 
             // Type any remaining text that wasn't typed due to corrections
-            // Run this logic on the UI thread to ensure it processes AFTER any pending HandleRealtimeTranscription
-            // and to access updated text variables safely
-            if (InvokeRequired)
+            // Use the captured values to avoid race conditions
+            if (finalTranscriptionText.Length > finalLastTypedLength)
             {
-                Invoke(
-                    new Action(async () =>
-                    {
-                        if (_realtimeTranscriptionText.Length > _lastTypedLength)
-                        {
-                            var remainingText = _realtimeTranscriptionText.Substring(
-                                _lastTypedLength
-                            );
-                            Logger.Log(
-                                $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
-                            );
-
-                            if (remainingText.Length > 5)
-                            {
-                                await _clip.SetTextAndPasteAsync(remainingText);
-                            }
-                            else
-                            {
-                                TypeTextDirectly(remainingText);
-                            }
-                        }
-                    })
+                var remainingText = finalTranscriptionText.Substring(finalLastTypedLength);
+                Logger.Log(
+                    $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
                 );
-            }
-            else
-            {
-                if (_realtimeTranscriptionText.Length > _lastTypedLength)
-                {
-                    var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
-                    Logger.Log(
-                        $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
-                    );
 
-                    if (remainingText.Length > 5)
+                if (remainingText.Length > 5)
+                {
+                    if (InvokeRequired)
+                    {
+                        await (Task)Invoke(
+                            new Func<Task>(() => _clip.SetTextAndPasteAsync(remainingText))
+                        );
+                    }
+                    else
                     {
                         await _clip.SetTextAndPasteAsync(remainingText);
+                    }
+                }
+                else
+                {
+                    if (InvokeRequired)
+                    {
+                        Invoke(new Action(() => TypeTextDirectly(remainingText)));
                     }
                     else
                     {
@@ -1474,8 +1473,8 @@ public class MainForm : Form
             }
 
             if (
-                !string.IsNullOrEmpty(_realtimeTranscriptionText)
-                || !string.IsNullOrEmpty(_typedText)
+                !string.IsNullOrEmpty(finalTranscriptionText)
+                || !string.IsNullOrEmpty(finalTypedText)
             )
             {
                 try
@@ -1484,11 +1483,6 @@ public class MainForm : Form
                 }
                 catch { }
             }
-
-            // Reset all state
-            _typedText = "";
-            _realtimeTranscriptionText = "";
-            _lastTypedLength = 0;
 
             Logger.Log("CleanupRealtimeStreamingAsync: Done");
         }

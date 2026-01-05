@@ -19,8 +19,8 @@ public sealed class TranscriptionHistoryForm : Form
         _history = history ?? throw new ArgumentNullException(nameof(history));
         Text = "Encrypted Transcription History";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = 900;
-        Height = 550;
+        Width = DpiHelper.Scale(900);
+        Height = DpiHelper.Scale(550);
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
 
@@ -28,7 +28,7 @@ public sealed class TranscriptionHistoryForm : Form
         {
             Dock = DockStyle.Top,
             HorizontalScrollbar = true,
-            Height = 200,
+            Height = DpiHelper.Scale(200),
         };
         _textBox = new TextBox
         {
@@ -42,11 +42,11 @@ public sealed class TranscriptionHistoryForm : Form
         _statusLabel = new Label
         {
             Dock = DockStyle.Bottom,
-            Height = 20,
+            Height = DpiHelper.Scale(20),
             Text = "Status: Ready",
             ForeColor = Color.DarkGray,
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(5, 0, 0, 0),
+            Padding = DpiHelper.Scale(new Padding(5, 0, 0, 0)),
         };
 
         var buttons = new FlowLayoutPanel

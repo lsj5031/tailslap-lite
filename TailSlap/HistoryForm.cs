@@ -22,8 +22,8 @@ public sealed class HistoryForm : Form
         _history = history ?? throw new ArgumentNullException(nameof(history));
         Text = "Encrypted Refinement History";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = 950;
-        Height = 650;
+        Width = DpiHelper.Scale(950);
+        Height = DpiHelper.Scale(650);
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
 
@@ -33,7 +33,7 @@ public sealed class HistoryForm : Form
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
-            SplitterDistance = 300,
+            SplitterDistance = DpiHelper.Scale(300),
         };
         _list = new ListBox { Dock = DockStyle.Fill, HorizontalScrollbar = true };
         split.Panel1.Controls.Add(_list);
@@ -44,7 +44,7 @@ public sealed class HistoryForm : Form
             Multiline = true,
             Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, 9),
+            Font = new Font(FontFamily.GenericMonospace, DpiHelper.ScaleFont(9)),
             ReadOnly = true,
         };
         _ref = new TextBox
@@ -52,14 +52,14 @@ public sealed class HistoryForm : Form
             Multiline = true,
             Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, 9),
+            Font = new Font(FontFamily.GenericMonospace, DpiHelper.ScaleFont(9)),
             ReadOnly = true,
         };
         _diff = new RichTextBox
         {
             Dock = DockStyle.Fill,
             ScrollBars = RichTextBoxScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, 9),
+            Font = new Font(FontFamily.GenericMonospace, DpiHelper.ScaleFont(9)),
             ReadOnly = true,
             WordWrap = false,
         };
@@ -72,11 +72,11 @@ public sealed class HistoryForm : Form
         _statusLabel = new Label
         {
             Dock = DockStyle.Bottom,
-            Height = 20,
+            Height = DpiHelper.Scale(20),
             Text = "Status: Ready",
             ForeColor = Color.DarkGray,
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(5, 0, 0, 0),
+            Padding = DpiHelper.Scale(new Padding(5, 0, 0, 0)),
         };
         Controls.Add(_statusLabel);
 
@@ -84,7 +84,7 @@ public sealed class HistoryForm : Form
         {
             Dock = DockStyle.Bottom,
             FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(10),
+            Padding = DpiHelper.Scale(new Padding(10)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             WrapContents = false,

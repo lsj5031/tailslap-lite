@@ -23,13 +23,13 @@ public sealed class HotkeyCaptureForm : Form
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         MinimizeBox = true;
-        Width = 560;
-        Height = 340;
+        Width = DpiHelper.Scale(560);
+        Height = DpiHelper.Scale(340);
         KeyPreview = true;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScroll = true;
         AutoSize = false;
-        MinimumSize = new Size(560, 360);
+        MinimumSize = new Size(DpiHelper.Scale(560), DpiHelper.Scale(360));
         SizeGripStyle = SizeGripStyle.Show;
         TopMost = true;
         Icon = MainForm.LoadMainIcon();
@@ -39,7 +39,7 @@ public sealed class HotkeyCaptureForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 5,
-            Padding = new Padding(16),
+            Padding = DpiHelper.Scale(new Padding(16)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
@@ -55,10 +55,10 @@ public sealed class HotkeyCaptureForm : Form
                 "Press a keyboard shortcut to use as your global hotkey.\r\n"
                 + "Must include Ctrl, Alt, Shift, or Win plus a non-modifier key (e.g., Ctrl+Alt+R, Win+T)",
             AutoSize = true,
-            MaximumSize = new Size(720, 0),
+            MaximumSize = new Size(DpiHelper.Scale(720), 0),
             Dock = DockStyle.Fill,
             UseCompatibleTextRendering = true,
-            Margin = new Padding(0, 0, 0, 6),
+            Margin = DpiHelper.Scale(new Padding(0, 0, 0, 6)),
         };
         layout.Controls.Add(_prompt, 0, 0);
 
@@ -67,7 +67,7 @@ public sealed class HotkeyCaptureForm : Form
             ReadOnly = true,
             Dock = DockStyle.Fill,
             TextAlign = HorizontalAlignment.Center,
-            Font = new Font("Segoe UI", 14, FontStyle.Bold),
+            Font = new Font("Segoe UI", DpiHelper.ScaleFont(14), FontStyle.Bold),
             BackColor = SystemColors.Window,
             Text = "Press a key combination...",
             Multiline = false,
@@ -78,11 +78,11 @@ public sealed class HotkeyCaptureForm : Form
         {
             Text = "Waiting for input...",
             AutoSize = true,
-            MaximumSize = new Size(720, 0),
+            MaximumSize = new Size(DpiHelper.Scale(720), 0),
             Dock = DockStyle.Fill,
             UseCompatibleTextRendering = true,
             ForeColor = SystemColors.GrayText,
-            Margin = new Padding(0, 4, 0, 6),
+            Margin = DpiHelper.Scale(new Padding(0, 4, 0, 6)),
         };
         layout.Controls.Add(_hint, 0, 2);
 
@@ -93,7 +93,7 @@ public sealed class HotkeyCaptureForm : Form
         {
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
-            Padding = new Padding(10),
+            Padding = DpiHelper.Scale(new Padding(10)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
@@ -251,15 +251,21 @@ public sealed class HotkeyCaptureForm : Form
         try
         {
             // Constrain labels to current width so they wrap correctly
-            int wrapW = Math.Max(300, ClientSize.Width - 40);
+            int wrapW = Math.Max(DpiHelper.Scale(300), ClientSize.Width - DpiHelper.Scale(40));
             _prompt.MaximumSize = new Size(wrapW, 0);
             _hint.MaximumSize = new Size(wrapW, 0);
             layout.PerformLayout();
             var pref = layout.PreferredSize;
-            int pad = 24;
+            int pad = DpiHelper.Scale(24);
             var wa = Screen.FromControl(this).WorkingArea;
-            int w = Math.Min(wa.Width - 80, Math.Max(MinimumSize.Width, pref.Width + pad));
-            int h = Math.Min(wa.Height - 80, Math.Max(MinimumSize.Height, pref.Height + pad));
+            int w = Math.Min(
+                wa.Width - DpiHelper.Scale(80),
+                Math.Max(MinimumSize.Width, pref.Width + pad)
+            );
+            int h = Math.Min(
+                wa.Height - DpiHelper.Scale(80),
+                Math.Max(MinimumSize.Height, pref.Height + pad)
+            );
             ClientSize = new Size(w, h);
         }
         catch { }

@@ -160,33 +160,57 @@ public sealed class HistoryService : IHistoryService
     {
         try
         {
-            var all = ReadAll();
-            if (all.Count <= MaxEntries)
+            if (!File.Exists(FilePath))
                 return;
 
-            int beforeCount = all.Count;
-            var trimmed = all.GetRange(all.Count - MaxEntries, MaxEntries);
-            int afterCount = trimmed.Count;
-
-            using var stream = new FileStream(
-                FilePath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None
-            );
-            using var writer = new StreamWriter(stream);
-
-            foreach (var (timestamp, model, original, refined) in trimmed)
+            // Read raw lines without decrypting to preserve original ciphertext
+            var allLines = new List<string>();
+            using (
+                var stream = new FileStream(
+                    FilePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite
+                )
+            )
+            using (var reader = new StreamReader(stream))
             {
-                var entry = new HistoryEntry
+                string? line;
+                while ((line = reader.ReadLine()) != null)
                 {
-                    Timestamp = timestamp,
-                    Model = model,
-                    OriginalCiphertext = EncryptString(original),
-                    RefinedCiphertext = EncryptString(refined),
-                };
-                writer.WriteLine(JsonSerializer.Serialize(entry, JsonLOptions));
+                    if (!string.IsNullOrWhiteSpace(line))
+                        allLines.Add(line);
+                }
             }
+
+            if (allLines.Count <= MaxEntries)
+                return;
+
+            int beforeCount = allLines.Count;
+            // Keep only the last MaxEntries lines (preserving original encrypted data)
+            var trimmedLines = allLines.GetRange(allLines.Count - MaxEntries, MaxEntries);
+            int afterCount = trimmedLines.Count;
+
+            // Write to temp file first for atomic replacement
+            var tempPath = FilePath + ".tmp";
+            using (
+                var writeStream = new FileStream(
+                    tempPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None
+                )
+            )
+            using (var writer = new StreamWriter(writeStream))
+            {
+                foreach (var rawLine in trimmedLines)
+                {
+                    writer.WriteLine(rawLine);
+                }
+            }
+
+            // Atomic move to replace original file
+            File.Move(tempPath, FilePath, overwrite: true);
 
             DiagnosticsEventSource.Log.HistoryTrim("refinement", beforeCount, afterCount);
         }
@@ -297,32 +321,57 @@ public sealed class HistoryService : IHistoryService
     {
         try
         {
-            var all = ReadAllTranscriptions();
-            if (all.Count <= MaxEntries)
+            if (!File.Exists(TranscriptionFilePath))
                 return;
 
-            int beforeCount = all.Count;
-            var trimmed = all.GetRange(all.Count - MaxEntries, MaxEntries);
-            int afterCount = trimmed.Count;
-
-            using var stream = new FileStream(
-                TranscriptionFilePath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None
-            );
-            using var writer = new StreamWriter(stream);
-
-            foreach (var (timestamp, text, duration) in trimmed)
+            // Read raw lines without decrypting to preserve original ciphertext
+            var allLines = new List<string>();
+            using (
+                var stream = new FileStream(
+                    TranscriptionFilePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite
+                )
+            )
+            using (var reader = new StreamReader(stream))
             {
-                var entry = new TranscriptionHistoryEntry
+                string? line;
+                while ((line = reader.ReadLine()) != null)
                 {
-                    Timestamp = timestamp,
-                    TextCiphertext = EncryptString(text),
-                    RecordingDurationMs = duration,
-                };
-                writer.WriteLine(JsonSerializer.Serialize(entry, JsonLOptions));
+                    if (!string.IsNullOrWhiteSpace(line))
+                        allLines.Add(line);
+                }
             }
+
+            if (allLines.Count <= MaxEntries)
+                return;
+
+            int beforeCount = allLines.Count;
+            // Keep only the last MaxEntries lines (preserving original encrypted data)
+            var trimmedLines = allLines.GetRange(allLines.Count - MaxEntries, MaxEntries);
+            int afterCount = trimmedLines.Count;
+
+            // Write to temp file first for atomic replacement
+            var tempPath = TranscriptionFilePath + ".tmp";
+            using (
+                var writeStream = new FileStream(
+                    tempPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None
+                )
+            )
+            using (var writer = new StreamWriter(writeStream))
+            {
+                foreach (var rawLine in trimmedLines)
+                {
+                    writer.WriteLine(rawLine);
+                }
+            }
+
+            // Atomic move to replace original file
+            File.Move(tempPath, TranscriptionFilePath, overwrite: true);
 
             DiagnosticsEventSource.Log.HistoryTrim("transcription", beforeCount, afterCount);
         }

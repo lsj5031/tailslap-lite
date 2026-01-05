@@ -13,10 +13,12 @@ public static class Logger
             "app.log"
         );
 
+    private const int MaxQueueSize = 10000; // Prevent unbounded memory growth
     private static readonly ConcurrentQueue<string> LogQueue = new();
     private static readonly SemaphoreSlim WriterSignal = new(0);
     private static readonly Task WriterTask;
     private static volatile bool _shuttingDown = false;
+    private static volatile int _droppedCount = 0;
 
     static Logger()
     {
@@ -27,6 +29,19 @@ public static class Logger
     {
         try
         {
+            // Backpressure: if queue is too large, drop oldest messages
+            while (LogQueue.Count >= MaxQueueSize)
+            {
+                if (LogQueue.TryDequeue(out _))
+                {
+                    Interlocked.Increment(ref _droppedCount);
+                }
+                else
+                {
+                    break; // Queue became empty, stop trying
+                }
+            }
+
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}";
             LogQueue.Enqueue(line);
             WriterSignal.Release();
@@ -61,6 +76,16 @@ public static class Logger
                             FileShare.ReadWrite
                         );
                         using var writer = new StreamWriter(stream);
+
+                        // Log if messages were dropped due to backpressure
+                        int dropped = Interlocked.Exchange(ref _droppedCount, 0);
+                        if (dropped > 0)
+                        {
+                            writer.WriteLine(
+                                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - [WARNING] {dropped} log messages dropped due to queue overflow"
+                            );
+                        }
+
                         int itemsWritten = 0;
                         while (LogQueue.TryDequeue(out var line) && itemsWritten < 100)
                         {
