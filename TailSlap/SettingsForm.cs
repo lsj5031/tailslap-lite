@@ -217,7 +217,7 @@ public sealed class SettingsForm : Form
         _apiKey = new TextBox
         {
             UseSystemPasswordChar = true,
-            PlaceholderText = "Enter API key (leave blank to keep)",
+            PlaceholderText = "Enter API key (leave blank to keep existing)",
             Dock = DockStyle.Fill,
         };
         llm.Controls.Add(
@@ -427,7 +427,7 @@ public sealed class SettingsForm : Form
         transcriber.Controls.Add(
             new Label
             {
-                Text = "Base URL",
+                Text = "API Endpoint (root, e.g. http://localhost:18000/v1)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -472,7 +472,7 @@ public sealed class SettingsForm : Form
         _transcriberApiKey = new TextBox
         {
             UseSystemPasswordChar = true,
-            PlaceholderText = "Enter API key (leave blank to keep)",
+            PlaceholderText = "Enter API key (leave blank to keep existing)",
             Dock = DockStyle.Fill,
         };
         transcriber.Controls.Add(

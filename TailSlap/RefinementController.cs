@@ -63,8 +63,8 @@ public sealed class RefinementController : IRefinementController
 
         try
         {
-            await RefineSelectionAsync(cfg, _currentCts.Token);
-            return true;
+            var success = await RefineSelectionAsync(cfg, _currentCts.Token);
+            return success;
         }
         finally
         {
@@ -89,7 +89,7 @@ public sealed class RefinementController : IRefinementController
         }
     }
 
-    private async Task RefineSelectionAsync(AppConfig cfg, CancellationToken ct)
+    private async Task<bool> RefineSelectionAsync(AppConfig cfg, CancellationToken ct)
     {
         try
         {
@@ -104,7 +104,7 @@ public sealed class RefinementController : IRefinementController
             if (string.IsNullOrWhiteSpace(text))
             {
                 NotificationService.ShowWarning("No text selected or in clipboard.");
-                return;
+                return false;
             }
 
             ct.ThrowIfCancellationRequested();
@@ -118,7 +118,7 @@ public sealed class RefinementController : IRefinementController
             if (string.IsNullOrWhiteSpace(refined))
             {
                 NotificationService.ShowError("Provider returned empty result.");
-                return;
+                return false;
             }
 
             ct.ThrowIfCancellationRequested();
@@ -126,7 +126,7 @@ public sealed class RefinementController : IRefinementController
             bool setTextSuccess = _clip.SetText(refined);
             if (!setTextSuccess)
             {
-                return;
+                return false;
             }
 
             await Task.Delay(100, ct);
@@ -154,15 +154,18 @@ public sealed class RefinementController : IRefinementController
             catch { }
 
             Logger.Log("Refinement completed successfully.");
+            return true;
         }
         catch (OperationCanceledException)
         {
             Logger.Log("Refinement was cancelled.");
+            return false;
         }
         catch (Exception ex)
         {
             NotificationService.ShowError("Refinement failed: " + ex.Message);
             Logger.Log("Error: " + ex.Message);
+            return false;
         }
     }
 

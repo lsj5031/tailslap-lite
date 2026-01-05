@@ -14,7 +14,7 @@ public class RealtimeTranscriptionControllerTests
             Transcriber = new TranscriberConfig
             {
                 Enabled = transcriberEnabled,
-                BaseUrl = "http://localhost:18000/v1/audio/transcriptions",
+                BaseUrl = "http://localhost:18000/v1",
                 Model = "whisper-1",
                 TimeoutSeconds = 30,
                 AutoPaste = true,

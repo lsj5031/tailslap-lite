@@ -52,7 +52,7 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
   },
   "Transcriber": {
     "Enabled": true,
-    "BaseUrl": "http://localhost:18000/v1/audio/transcriptions",
+    "BaseUrl": "http://localhost:18000/v1",
     "Model": "glm-nano-2512",
     "TimeoutSeconds": 30,
     "AutoPaste": true,

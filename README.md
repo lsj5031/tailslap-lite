@@ -60,7 +60,7 @@
 
 **Advanced Settings:**
 - **Streaming Mode**: Enable WebSocket streaming for real-time feedback (requires WebSocket endpoint)
-- **WebSocket Endpoint**: Defaults to `ws://localhost:18000/v1/audio/transcriptions/stream`
+- **WebSocket Endpoint**: Defaults to `ws://localhost:18000/v1/audio/transcriptions/stream` (built from the base API endpoint)
 - **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
 - **Microphone Selection**: Choose preferred microphone device in Settings
 - **Buffer Management**: 500ms aggregation for optimal streaming performance
@@ -95,7 +95,7 @@ You can edit this file directly or use the Settings dialog in the system tray me
 - `HttpReferer`, `XTitle`: Optional HTTP headers
 
 #### Transcription Configuration
-- `BaseUrl`: Transcription endpoint (default: `http://localhost:18000/v1/audio/transcriptions`)
+- `BaseUrl`: OpenAI-style API root (default: `http://localhost:18000/v1`; app appends `/audio/transcriptions`)
 - `Model`: Transcription model (default: `glm-nano-2512`)
 - `ApiKey`: Encrypted API key (optional)
 - `TimeoutSeconds`: Request timeout (default: `30`)

@@ -64,6 +64,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             // Create a short silence WAV file for testing
             var silenceWav = CreateSilenceWavBytes(durationSeconds: 0.6f);
 
+            var endpoint = _config.TranscriptionEndpoint;
+
             using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -83,7 +85,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             }
 
             // Create request and add Authorization header (must be on HttpRequestMessage, not content)
-            using var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
             {
                 Content = formData,
             };
@@ -171,6 +173,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         CancellationToken ct = default
     )
     {
+        var endpoint = _config.TranscriptionEndpoint;
+
         if (!File.Exists(audioFilePath))
         {
             throw new FileNotFoundException($"Audio file not found: {audioFilePath}");
@@ -215,10 +219,10 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     Logger.Log($"Added model to request: {_config.Model}");
                 }
 
-                Logger.Log($"Posting to {_config.BaseUrl}");
+                Logger.Log($"Posting to {endpoint}");
 
                 // Create request and add Authorization header (must be on HttpRequestMessage, not content)
-                using var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
                 {
                     Content = formData,
                 };
@@ -364,6 +368,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         [EnumeratorCancellation] CancellationToken ct = default
     )
     {
+        var endpoint = _config.TranscriptionEndpoint;
+
         if (!File.Exists(audioFilePath))
         {
             throw new FileNotFoundException($"Audio file not found: {audioFilePath}");
@@ -402,9 +408,9 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         // Request streaming response
         formData.Add(new StringContent("true"), "stream");
 
-        Logger.Log($"Posting streaming request to {_config.BaseUrl}");
+        Logger.Log($"Posting streaming request to {endpoint}");
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = formData,
         };

@@ -80,7 +80,7 @@ public sealed class LlmConfig
 public sealed class TranscriberConfig
 {
     public bool Enabled { get; set; } = true;
-    public string BaseUrl { get; set; } = "http://localhost:18000/v1/audio/transcriptions";
+    public string BaseUrl { get; set; } = "http://localhost:18000/v1";
     public string Model { get; set; } = "glm-nano-2512";
     public string? ApiKeyEncrypted { get; set; } = null;
     public int TimeoutSeconds { get; set; } = 30;
@@ -109,23 +109,67 @@ public sealed class TranscriberConfig
     {
         get
         {
-            if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var baseUri))
-            {
-                return "ws://localhost:18000/v1/audio/transcriptions/stream";
-            }
+            var builder = CreateBaseUriBuilder(forWebSocket: true);
+            builder.Path = BuildTranscriptionPath(builder.Path, includeStream: true);
+            return builder.ToString();
+        }
+    }
 
-            var builder = new UriBuilder(baseUri);
+    [JsonIgnore]
+    public Uri TranscriptionEndpoint
+    {
+        get
+        {
+            var builder = CreateBaseUriBuilder();
+            builder.Path = BuildTranscriptionPath(builder.Path, includeStream: false);
+            return builder.Uri;
+        }
+    }
+
+    private UriBuilder CreateBaseUriBuilder(bool forWebSocket = false)
+    {
+        if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var baseUri))
+        {
+            baseUri = new Uri("http://localhost:18000/v1");
+        }
+
+        var builder = new UriBuilder(baseUri);
+        if (forWebSocket)
+        {
             builder.Scheme = builder.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
                 ? "wss"
                 : "ws";
-
-            // Ensure path ends with /stream
-            // If BaseUrl is .../transcriptions, this becomes .../transcriptions/stream
-            var path = builder.Path.TrimEnd('/');
-            builder.Path = path + "/stream";
-
-            return builder.ToString();
         }
+
+        return builder;
+    }
+
+    private static string BuildTranscriptionPath(string basePath, bool includeStream)
+    {
+        var path = string.IsNullOrWhiteSpace(basePath) ? "/v1" : basePath;
+        path = path.TrimEnd('/');
+
+        if (!path.StartsWith("/"))
+        {
+            path = "/" + path;
+        }
+
+        if (path.EndsWith("/audio/transcriptions/stream", StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[..^"/stream".Length];
+        }
+
+        if (!path.EndsWith("/audio/transcriptions", StringComparison.OrdinalIgnoreCase))
+        {
+            path += "/audio/transcriptions";
+        }
+
+        if (includeStream)
+        {
+            path += "/stream";
+        }
+
+        return path;
     }
 
     public TranscriberConfig Clone()
