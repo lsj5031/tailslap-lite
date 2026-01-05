@@ -158,6 +158,13 @@ public sealed class ConfigService : IConfigService, IDisposable
         );
     private static string FilePath => Path.Combine(Dir, "config.json");
 
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        TypeInfoResolver = TailSlapJsonContext.Default,
+    };
+
     private FileSystemWatcher? _watcher;
     public event Action? ConfigChanged;
     private DateTime _lastRead = DateTime.MinValue;
@@ -259,13 +266,7 @@ public sealed class ConfigService : IConfigService, IDisposable
             if (!Directory.Exists(Dir))
                 Directory.CreateDirectory(Dir);
             _lastRead = DateTime.Now;
-            var options = new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                TypeInfoResolver = TailSlapJsonContext.Default,
-            };
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, options));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, WriteOptions));
         }
         catch (Exception ex)
         {

@@ -54,6 +54,7 @@ jobs:
           - Windows 10 or later
           
           See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for setup instructions.
-        files: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
+        files: |
+          TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
         draft: false
         prerelease: false
