@@ -276,14 +276,33 @@ public sealed class AudioRecorder : IDisposable
 
                     if (enableVAD && consecutiveSilenceMs >= silenceThresholdMs)
                     {
-                        Logger.Log(
-                            $"AudioRecorder: Silence detected ({consecutiveSilenceMs}ms >= {silenceThresholdMs}ms), stopping"
-                        );
-                        stats.SilenceDetected = true;
-                        stopwatch.Stop();
-                        stats.DurationMs = (int)stopwatch.ElapsedMilliseconds;
-                        stats.BytesRecorded = (int)_recordedData.Length;
-                        return await FinishRecordingAsync(outputPath, stats);
+                        // Check if server detected speech recently (within last 2 seconds)
+                        // This prevents cutting off if local VAD is too strict but server hears something
+                        if (_externalSpeechDetected && (DateTime.Now - _lastExternalSpeechTime).TotalMilliseconds < 2000)
+                        {
+                            // Logger.Log($"AudioRecorder: Local silence ({consecutiveSilenceMs}ms) but external speech detected recently. Extending recording.");
+                            consecutiveSilenceMs = 0; // Reset silence counter
+                            hasDetectedSpeech = true; // FORCE local state to acknowledge speech happened
+                        }
+                        else
+                        {
+                            Logger.Log(
+                                $"AudioRecorder: Silence detected ({consecutiveSilenceMs}ms >= {silenceThresholdMs}ms), stopping"
+                            );
+                            stats.SilenceDetected = true;
+                            stopwatch.Stop();
+                            stats.DurationMs = (int)stopwatch.ElapsedMilliseconds;
+                            stats.BytesRecorded = (int)_recordedData.Length;
+                            return await FinishRecordingAsync(outputPath, stats);
+                        }
+                    }
+
+                    // If external speech was detected, ensure we consider speech as "started" locally
+                    // This prevents the infinite recording bug where local VAD misses the speech start
+                    // and thus never starts counting silence.
+                    if (_externalSpeechDetected)
+                    {
+                        hasDetectedSpeech = true;
                     }
 
                     await Task.Delay(VAD_BUFFER_MS, ct);
@@ -813,10 +832,20 @@ public sealed class AudioRecorder : IDisposable
         if (enableVAD && anySpeechDetected && lastSpeech != DateTime.MinValue)
         {
             int wallClockSilenceMs = (int)(now - lastSpeech).TotalMilliseconds;
-            if (wallClockSilenceMs >= silenceThresholdMs)
+            
+            // If we're relying solely on server VAD (local VAD never activated),
+            // use a longer timeout to account for server inference latency (~2s per transcription)
+            int effectiveThreshold = silenceThresholdMs;
+            if (_externalSpeechDetected && !hasDetectedSpeech)
+            {
+                // Server VAD only: add extra buffer for inference latency
+                effectiveThreshold = silenceThresholdMs + 3000; // 3s extra for server latency
+            }
+            
+            if (wallClockSilenceMs >= effectiveThreshold)
             {
                 Logger.Log(
-                    $"VAD[Stream]: *** WALL-CLOCK THRESHOLD REACHED *** {wallClockSilenceMs}ms >= {silenceThresholdMs}ms (localVAD={hasDetectedSpeech}, serverVAD={_externalSpeechDetected}). Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
+                    $"VAD[Stream]: *** WALL-CLOCK THRESHOLD REACHED *** {wallClockSilenceMs}ms >= {effectiveThreshold}ms (localVAD={hasDetectedSpeech}, serverVAD={_externalSpeechDetected}). Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
                 );
                 return true;
             }

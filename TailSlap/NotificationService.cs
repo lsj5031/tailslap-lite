@@ -91,6 +91,12 @@ public static class NotificationService
         int durationMs
     )
     {
+        // Only show warnings and errors in the notification area to reduce noise
+        if (type == NotificationType.Info || type == NotificationType.Success)
+        {
+            return;
+        }
+
         if (_trayIcon == null)
         {
             // Fallback to simple message box if no tray icon
