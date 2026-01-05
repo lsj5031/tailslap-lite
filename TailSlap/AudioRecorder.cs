@@ -278,7 +278,10 @@ public sealed class AudioRecorder : IDisposable
                     {
                         // Check if server detected speech recently (within last 2 seconds)
                         // This prevents cutting off if local VAD is too strict but server hears something
-                        if (_externalSpeechDetected && (DateTime.Now - _lastExternalSpeechTime).TotalMilliseconds < 2000)
+                        if (
+                            _externalSpeechDetected
+                            && (DateTime.Now - _lastExternalSpeechTime).TotalMilliseconds < 2000
+                        )
                         {
                             // Logger.Log($"AudioRecorder: Local silence ({consecutiveSilenceMs}ms) but external speech detected recently. Extending recording.");
                             consecutiveSilenceMs = 0; // Reset silence counter
@@ -832,7 +835,7 @@ public sealed class AudioRecorder : IDisposable
         if (enableVAD && anySpeechDetected && lastSpeech != DateTime.MinValue)
         {
             int wallClockSilenceMs = (int)(now - lastSpeech).TotalMilliseconds;
-            
+
             // If we're relying solely on server VAD (local VAD never activated),
             // use a longer timeout to account for server inference latency (~2s per transcription)
             int effectiveThreshold = silenceThresholdMs;
@@ -841,7 +844,7 @@ public sealed class AudioRecorder : IDisposable
                 // Server VAD only: add extra buffer for inference latency
                 effectiveThreshold = silenceThresholdMs + 3000; // 3s extra for server latency
             }
-            
+
             if (wallClockSilenceMs >= effectiveThreshold)
             {
                 Logger.Log(

@@ -1084,9 +1084,10 @@ public class MainForm : Form
             // We compare with what's on screen and apply minimal edits.
 
             // Calculate common prefix between what's on screen and new text
-            string onScreen = _lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length
-                ? _realtimeTranscriptionText.Substring(0, _lastTypedLength)
-                : "";
+            string onScreen =
+                _lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length
+                    ? _realtimeTranscriptionText.Substring(0, _lastTypedLength)
+                    : "";
 
             int commonPrefixLen = 0;
             int minLen = Math.Min(onScreen.Length, text.Length);
@@ -1472,7 +1473,10 @@ public class MainForm : Form
                 }
             }
 
-            if (!string.IsNullOrEmpty(_realtimeTranscriptionText) || !string.IsNullOrEmpty(_typedText))
+            if (
+                !string.IsNullOrEmpty(_realtimeTranscriptionText)
+                || !string.IsNullOrEmpty(_typedText)
+            )
             {
                 try
                 {
