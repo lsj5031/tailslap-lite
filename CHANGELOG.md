@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Review
-- Comprehensive codebase analysis and changelog generation based on actual implementation
-- Identified and documented all major features and architectural components
-- Updated changelog to reflect comprehensive feature set rather than misleading git history
+## [2.0.1] - 2026-01-06
+
+### Fixed
+- **Build System**: Added missing UIAutomation framework reference for Windows Desktop App compatibility
+- **Namespace Resolution**: Added missing `using TailSlap;` directives to MainForm.cs, Program.cs, and test files
+- **Test Configuration**: Fixed invalid assignment to read-only `WebSocketUrl` property in transcription tests
+- **Code Formatting**: Applied csharpiER formatting to all 56 files for consistent code style
+
+### Changed
+- **Development Tools**: Switched from `dotnet format` to csharpiER (v1.2.5) for proper code formatting
+- **Pre-commit Hooks**: Ensured all code passes csharpiER validation before commits
 
 ## [2.0.0] - 2026-01-05
 
