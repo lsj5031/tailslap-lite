@@ -103,6 +103,20 @@ public sealed class AudioRecorder : IDisposable
     public event Action<ArraySegment<byte>>? OnAudioChunk;
     public event Action? OnSilenceDetected;
 
+    // External speech detection (e.g., from server transcription)
+    private volatile bool _externalSpeechDetected = false;
+    private DateTime _lastExternalSpeechTime = DateTime.MinValue;
+
+    /// <summary>
+    /// Notify the recorder that speech was detected externally (e.g., server sent transcription).
+    /// This resets the silence timer for auto-stop purposes.
+    /// </summary>
+    public void NotifySpeechDetected()
+    {
+        _externalSpeechDetected = true;
+        _lastExternalSpeechTime = DateTime.Now;
+    }
+
     public AudioRecorder()
     {
         _buffers = new byte[BUFFER_COUNT][];
@@ -391,7 +405,7 @@ public sealed class AudioRecorder : IDisposable
                         {
                             float rms = CalculateRMS(data);
                             int bufferDurationMs = data.Length / BYTES_PER_MS;
-                            if (rms < VAD_RMS_THRESHOLD)
+                            if (rms < _vadSilenceThreshold)
                             {
                                 // Only count silence if we've detected speech first
                                 if (hasDetectedSpeech)
@@ -615,6 +629,9 @@ public sealed class AudioRecorder : IDisposable
         _buffersWithSpeech = 0;
         _buffersWithSilence = 0;
         _lastBufferTime = DateTime.MinValue;
+        _lastSpeechTime = DateTime.MinValue;
+        _externalSpeechDetected = false;
+        _lastExternalSpeechTime = DateTime.MinValue;
 
         int numDevices = waveInGetNumDevs();
         Logger.Log(
@@ -751,15 +768,25 @@ public sealed class AudioRecorder : IDisposable
         }
     }
 
-    private const int VAD_RMS_THRESHOLD = 120; // Used for standard recording
-    private const int VAD_ACTIVATION_THRESHOLD = 900; // Used for streaming (start) - needs clear speech above ambient
-    private const int VAD_SUSTAIN_THRESHOLD = 550; // Used for streaming (continue) - lowered to 550 (very close to noise floor)
+    // Default VAD thresholds (can be overridden via SetVadThresholds)
+    private int _vadSilenceThreshold = 120; // Used for standard recording
+    private int _vadActivationThreshold = 900; // Used for streaming (start) - needs clear speech above ambient
+    private int _vadSustainThreshold = 550; // Used for streaming (continue) - lowered to 550 (very close to noise floor)
+
+    public void SetVadThresholds(int silenceThreshold, int activationThreshold, int sustainThreshold)
+    {
+        _vadSilenceThreshold = silenceThreshold > 0 ? silenceThreshold : 120;
+        _vadActivationThreshold = activationThreshold > 0 ? activationThreshold : 900;
+        _vadSustainThreshold = sustainThreshold > 0 ? sustainThreshold : 550;
+        Logger.Log($"AudioRecorder: VAD thresholds set - silence={_vadSilenceThreshold}, activation={_vadActivationThreshold}, sustain={_vadSustainThreshold}");
+    }
 
     // Debug: track buffer processing stats
     private int _totalBuffersProcessed = 0;
     private int _buffersWithSpeech = 0;
     private int _buffersWithSilence = 0;
     private DateTime _lastBufferTime = DateTime.MinValue;
+    private DateTime _lastSpeechTime = DateTime.MinValue;
 
     private bool ProcessStreamingBuffers(
         bool enableVAD,
@@ -770,6 +797,23 @@ public sealed class AudioRecorder : IDisposable
     {
         int buffersProcessedThisCall = 0;
         var now = DateTime.Now;
+
+        // Wall-clock silence detection: if speech was detected (locally OR via server transcription)
+        // and no recent speech, use actual elapsed time instead of buffer-based counting
+        bool anySpeechDetected = hasDetectedSpeech || _externalSpeechDetected;
+        DateTime lastSpeech = _lastSpeechTime > _lastExternalSpeechTime ? _lastSpeechTime : _lastExternalSpeechTime;
+        
+        if (enableVAD && anySpeechDetected && lastSpeech != DateTime.MinValue)
+        {
+            int wallClockSilenceMs = (int)(now - lastSpeech).TotalMilliseconds;
+            if (wallClockSilenceMs >= silenceThresholdMs)
+            {
+                Logger.Log(
+                    $"VAD[Stream]: *** WALL-CLOCK THRESHOLD REACHED *** {wallClockSilenceMs}ms >= {silenceThresholdMs}ms (localVAD={hasDetectedSpeech}, serverVAD={_externalSpeechDetected}). Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
+                );
+                return true;
+            }
+        }
 
         for (int i = 0; i < BUFFER_COUNT; i++)
         {
@@ -803,8 +847,8 @@ public sealed class AudioRecorder : IDisposable
                         {
                             string speechState = hasDetectedSpeech ? "ACTIVE" : "WAITING";
                             int threshold = hasDetectedSpeech
-                                ? VAD_SUSTAIN_THRESHOLD
-                                : VAD_ACTIVATION_THRESHOLD;
+                                ? _vadSustainThreshold
+                                : _vadActivationThreshold;
                             Logger.Log(
                                 $"VAD[DEBUG]: buf#{_totalBuffersProcessed} RMS={rms:F0} thresh={threshold} state={speechState} silence={consecutiveSilenceMs}ms"
                             );
@@ -818,18 +862,18 @@ public sealed class AudioRecorder : IDisposable
                         bool isSpeech = false;
                         if (!hasDetectedSpeech)
                         {
-                            if (rms > VAD_ACTIVATION_THRESHOLD)
+                            if (rms > _vadActivationThreshold)
                             {
                                 isSpeech = true;
                                 _buffersWithSpeech++;
                                 Logger.Log(
-                                    $"VAD[Stream]: *** Speech ACTIVATED *** (RMS={rms:F0} > {VAD_ACTIVATION_THRESHOLD})"
+                                    $"VAD[Stream]: *** Speech ACTIVATED *** (RMS={rms:F0} > {_vadActivationThreshold})"
                                 );
                             }
                         }
                         else
                         {
-                            if (rms > VAD_SUSTAIN_THRESHOLD)
+                            if (rms > _vadSustainThreshold)
                             {
                                 isSpeech = true;
                                 _buffersWithSpeech++;
@@ -837,7 +881,7 @@ public sealed class AudioRecorder : IDisposable
                                 if (consecutiveSilenceMs > 0)
                                 {
                                     Logger.Log(
-                                        $"VAD[Stream]: Speech SUSTAINED (RMS={rms:F0} > {VAD_SUSTAIN_THRESHOLD}), silence reset from {consecutiveSilenceMs}ms"
+                                        $"VAD[Stream]: Speech SUSTAINED (RMS={rms:F0} > {_vadSustainThreshold}), silence reset from {consecutiveSilenceMs}ms"
                                     );
                                 }
                             }
@@ -851,6 +895,7 @@ public sealed class AudioRecorder : IDisposable
                         {
                             hasDetectedSpeech = true;
                             consecutiveSilenceMs = 0;
+                            _lastSpeechTime = now;
                         }
                         else
                         {

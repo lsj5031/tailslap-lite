@@ -90,6 +90,12 @@ public sealed class TranscriberConfig
     public int PreferredMicrophoneIndex { get; set; } = -1;
     public bool StreamResults { get; set; } = false;
 
+    // VAD sensitivity thresholds (RMS values for 16-bit audio)
+    // Higher values = less sensitive (requires louder speech to trigger)
+    public int VadActivationThreshold { get; set; } = 900; // Threshold to START detecting speech
+    public int VadSustainThreshold { get; set; } = 550; // Threshold to CONTINUE detecting speech
+    public int VadSilenceThreshold { get; set; } = 120; // Threshold for standard recording silence detection
+
     [JsonIgnore]
     public string? ApiKey
     {
@@ -136,6 +142,9 @@ public sealed class TranscriberConfig
             SilenceThresholdMs = SilenceThresholdMs,
             PreferredMicrophoneIndex = PreferredMicrophoneIndex,
             StreamResults = StreamResults,
+            VadActivationThreshold = VadActivationThreshold,
+            VadSustainThreshold = VadSustainThreshold,
+            VadSilenceThreshold = VadSilenceThreshold,
         };
     }
 }

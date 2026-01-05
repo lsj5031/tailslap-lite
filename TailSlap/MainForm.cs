@@ -9,6 +9,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
+public enum StreamingState
+{
+    Idle,
+    Starting,
+    Streaming,
+    Stopping
+}
+
 public class MainForm : Form
 {
     private readonly NotifyIcon _tray;
@@ -42,7 +50,8 @@ public class MainForm : Form
     private AppConfig _currentConfig;
     private bool _isRefining;
     private bool _isTranscribing;
-    private bool _isRealtimeStreaming;
+    private StreamingState _streamingState = StreamingState.Idle;
+    private readonly object _streamingStateLock = new();
     private bool _isSettingsOpen;
     private CancellationTokenSource? _transcriberCts;
     private RealtimeTranscriber? _realtimeTranscriber;
@@ -52,6 +61,13 @@ public class MainForm : Form
     private readonly SemaphoreSlim _transcriptionLock = new(1, 1);
     private readonly System.Collections.Generic.List<byte> _streamingBuffer = new();
     private const int SEND_BUFFER_SIZE = 16000; // 500ms aggregation for smoother feedback
+    private IntPtr _streamingTargetWindow = IntPtr.Zero; // Track foreground window when streaming started
+    private int _cleanupInProgress = 0; // Idempotency flag for cleanup
+    private DateTime _streamingStartTime = DateTime.MinValue; // Track when streaming started for no-speech timeout
+    private const int NO_SPEECH_TIMEOUT_SECONDS = 30; // Auto-stop if no speech detected after this duration
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
 
     public MainForm(
         IConfigService config,
@@ -827,8 +843,14 @@ public class MainForm : Form
 
     private async void TriggerStreamingTranscribe()
     {
+        StreamingState currentState;
+        lock (_streamingStateLock)
+        {
+            currentState = _streamingState;
+        }
+
         Logger.Log(
-            $"TriggerStreamingTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, _isRealtimeStreaming: {_isRealtimeStreaming}"
+            $"TriggerStreamingTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, state: {currentState}"
         );
 
         if (!_currentConfig.Transcriber.Enabled)
@@ -844,20 +866,39 @@ public class MainForm : Form
             return;
         }
 
-        // If already streaming in real-time, stop it
-        if (_isRealtimeStreaming)
+        // State machine: only act on Idle or Streaming states, ignore transitions in progress
+        lock (_streamingStateLock)
         {
-            await StopRealtimeStreamingAsync();
-            return;
+            if (_streamingState == StreamingState.Starting || _streamingState == StreamingState.Stopping)
+            {
+                Logger.Log($"TriggerStreamingTranscribe: Ignoring hotkey, transition in progress (state={_streamingState})");
+                return;
+            }
+
+            if (_streamingState == StreamingState.Streaming)
+            {
+                _streamingState = StreamingState.Stopping;
+            }
+            else
+            {
+                _streamingState = StreamingState.Starting;
+            }
+            currentState = _streamingState;
         }
 
-        await StartRealtimeStreamingAsync();
+        if (currentState == StreamingState.Stopping)
+        {
+            await StopRealtimeStreamingAsync();
+        }
+        else
+        {
+            await StartRealtimeStreamingAsync();
+        }
     }
 
     private async Task StartRealtimeStreamingAsync()
     {
         Logger.Log("StartRealtimeStreamingAsync: Starting real-time WebSocket transcription");
-        _isRealtimeStreaming = true;
         _realtimeTranscriptionText = "";
         _lastTypedLength = 0;
 
@@ -877,12 +918,26 @@ public class MainForm : Form
             _realtimeRecorder = new AudioRecorder(
                 _currentConfig.Transcriber.PreferredMicrophoneIndex
             );
+            _realtimeRecorder.SetVadThresholds(
+                _currentConfig.Transcriber.VadSilenceThreshold,
+                _currentConfig.Transcriber.VadActivationThreshold,
+                _currentConfig.Transcriber.VadSustainThreshold
+            );
             _realtimeRecorder.OnAudioChunk += OnRealtimeAudioChunk;
             _realtimeRecorder.OnSilenceDetected += OnRealtimeSilenceDetected;
 
+            // Capture the foreground window to detect if user switches apps during dictation
+            _streamingTargetWindow = GetForegroundWindow();
+            _streamingStartTime = DateTime.UtcNow;
+            Logger.Log($"StartRealtimeStreamingAsync: Target window captured: 0x{_streamingTargetWindow:X}");
+
+            // Transition to Streaming state now that setup is complete
+            lock (_streamingStateLock)
+            {
+                _streamingState = StreamingState.Streaming;
+            }
+
             _transcriberCts = new CancellationTokenSource();
-            // Enable client-side VAD for auto-stop after silence
-            // The server has its own VAD for triggering transcriptions, but doesn't auto-close
             await _realtimeRecorder.StartStreamingAsync(
                 _transcriberCts.Token,
                 enableVAD: _currentConfig.Transcriber.EnableVAD,
@@ -898,15 +953,33 @@ public class MainForm : Form
             }
             catch { }
 
-            // Only clean up here on error.
-            // Normal stop flow is handled by StopRealtimeStreamingAsync to allow for final transcription wait.
             await CleanupRealtimeStreamingAsync();
         }
-        // finally block removed to prevent premature disposal during graceful stop
     }
 
     private void OnRealtimeAudioChunk(ArraySegment<byte> chunk)
     {
+        // Check state before processing audio
+        StreamingState state;
+        lock (_streamingStateLock)
+        {
+            state = _streamingState;
+        }
+
+        if (state != StreamingState.Streaming)
+            return;
+
+        // Check for no-speech timeout (user never spoke above activation threshold)
+        if (_streamingStartTime != DateTime.MinValue &&
+            _realtimeTranscriptionText.Length == 0 &&
+            (DateTime.UtcNow - _streamingStartTime).TotalSeconds >= NO_SPEECH_TIMEOUT_SECONDS)
+        {
+            Logger.Log($"OnRealtimeAudioChunk: No speech detected after {NO_SPEECH_TIMEOUT_SECONDS}s, triggering auto-stop");
+            // Fire silence detected to initiate stop (on a separate task to avoid blocking audio processing)
+            _ = Task.Run(() => OnRealtimeSilenceDetected());
+            return;
+        }
+
         if (_realtimeTranscriber?.IsConnected == true)
         {
             // Accumulate chunks to reduce server load (send every 500ms instead of 50ms)
@@ -939,6 +1012,12 @@ public class MainForm : Form
     {
         Logger.Log($"OnRealtimeTranscription: text.Length={text.Length}, final={isFinal}");
 
+        // Notify recorder that server detected speech (for auto-stop purposes)
+        if (!string.IsNullOrEmpty(text) && !isFinal)
+        {
+            _realtimeRecorder?.NotifySpeechDetected();
+        }
+
         if (InvokeRequired)
         {
             BeginInvoke(new Action(() => HandleRealtimeTranscription(text, isFinal)));
@@ -955,8 +1034,31 @@ public class MainForm : Form
         await _transcriptionLock.WaitAsync();
         try
         {
+            // Check state - ignore if we're idle (cleanup already happened)
+            StreamingState state;
+            lock (_streamingStateLock)
+            {
+                state = _streamingState;
+            }
+            if (state == StreamingState.Idle)
+            {
+                Logger.Log("HandleRealtimeTranscription: Ignoring, state=Idle");
+                return;
+            }
+
             if (string.IsNullOrEmpty(text))
                 return;
+
+            // Check if foreground window changed - if so, reset baseline to prevent incorrect backspacing
+            if (!IsForegroundWindowSafe())
+            {
+                Logger.Log("HandleRealtimeTranscription: Window changed, resetting baseline");
+                _realtimeTranscriptionText = text;
+                _lastTypedLength = 0;
+                // Update target window for subsequent typing
+                _streamingTargetWindow = GetForegroundWindow();
+                return;
+            }
 
             // Server behavior: Each partial is the CUMULATIVE transcription of all audio so far.
             // The server refines its transcription over time, so later partials may correct earlier ones.
@@ -1110,13 +1212,31 @@ public class MainForm : Form
         }
     }
 
+    private bool IsForegroundWindowSafe()
+    {
+        if (_streamingTargetWindow == IntPtr.Zero)
+            return true;
+
+        var current = GetForegroundWindow();
+        if (current != _streamingTargetWindow)
+        {
+            Logger.Log($"IsForegroundWindowSafe: Window changed from 0x{_streamingTargetWindow:X} to 0x{current:X}, skipping destructive operation");
+            return false;
+        }
+        return true;
+    }
+
     private void SendBackspace(int count)
     {
         if (count <= 0)
             return;
 
-        // Batch backspaces if there are many to avoid slow UI
-        // But SendKeys "{BS 5}" syntax is cleaner
+        if (!IsForegroundWindowSafe())
+        {
+            Logger.Log($"SendBackspace: Skipping {count} backspaces, foreground window changed");
+            return;
+        }
+
         try
         {
             SendKeys.SendWait("{BS " + count + "}");
@@ -1128,38 +1248,93 @@ public class MainForm : Form
         }
     }
 
-    private void OnRealtimeError(string error)
+    private async void OnRealtimeError(string error)
     {
-        Logger.Log($"OnRealtimeError: {error}");
         try
         {
-            NotificationService.ShowError($"Real-time transcription error: {error}");
+            Logger.Log($"OnRealtimeError: {error}");
+            try
+            {
+                NotificationService.ShowError($"Real-time transcription error: {error}");
+            }
+            catch { }
+
+            // Initiate stop on error if we're streaming
+            lock (_streamingStateLock)
+            {
+                if (_streamingState != StreamingState.Streaming)
+                {
+                    Logger.Log($"OnRealtimeError: Ignoring stop, state={_streamingState}");
+                    return;
+                }
+                _streamingState = StreamingState.Stopping;
+            }
+
+            await StopRealtimeStreamingAsync();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Log($"OnRealtimeError: ERROR during handling - {ex.Message}");
+        }
     }
 
-    private void OnRealtimeDisconnected()
+    private async void OnRealtimeDisconnected()
     {
-        Logger.Log("OnRealtimeDisconnected: WebSocket disconnected");
-        if (_isRealtimeStreaming)
+        try
         {
-            // Don't type here - let CleanupRealtimeStreamingAsync handle the final text
-            // This prevents race conditions where both type the same text
-            _realtimeRecorder?.StopRecording();
-            _transcriberCts?.Cancel();
+            Logger.Log("OnRealtimeDisconnected: WebSocket disconnected");
+            bool shouldInitiateStop = false;
+            lock (_streamingStateLock)
+            {
+                // If we're streaming, transition to stopping
+                if (_streamingState == StreamingState.Streaming)
+                {
+                    _streamingState = StreamingState.Stopping;
+                    shouldInitiateStop = true;
+                }
+                // If already stopping, just help with cleanup
+                else if (_streamingState == StreamingState.Stopping)
+                {
+                    _realtimeRecorder?.StopRecording();
+                    _transcriberCts?.Cancel();
+                    return;
+                }
+            }
+
+            if (shouldInitiateStop)
+            {
+                await StopRealtimeStreamingAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"OnRealtimeDisconnected: ERROR - {ex.Message}");
         }
     }
 
     private async void OnRealtimeSilenceDetected()
     {
-        Logger.Log("OnRealtimeSilenceDetected: Silence detected, stopping streaming");
         try
         {
-            // Removed notification spam
-            // NotificationService.ShowInfo("Silence detected, stopping transcription...");
+            Logger.Log("OnRealtimeSilenceDetected: Silence detected, stopping streaming");
+
+            // Only initiate stop if we're actively streaming
+            lock (_streamingStateLock)
+            {
+                if (_streamingState != StreamingState.Streaming)
+                {
+                    Logger.Log($"OnRealtimeSilenceDetected: Ignoring, state={_streamingState}");
+                    return;
+                }
+                _streamingState = StreamingState.Stopping;
+            }
+
+            await StopRealtimeStreamingAsync();
         }
-        catch { }
-        await StopRealtimeStreamingAsync();
+        catch (Exception ex)
+        {
+            Logger.Log($"OnRealtimeSilenceDetected: ERROR - {ex.Message}");
+        }
     }
 
     private async Task StopRealtimeStreamingAsync()
@@ -1243,99 +1418,132 @@ public class MainForm : Form
 
     private async Task CleanupRealtimeStreamingAsync()
     {
-        Logger.Log("CleanupRealtimeStreamingAsync: Cleaning up");
-
-        // Wait for any pending transcription processing to finish (e.g. final message)
-        // This prevents race condition where cleanup runs before HandleRealtimeTranscription updates text
-        await _transcriptionLock.WaitAsync();
-        _transcriptionLock.Release();
-
-        if (_realtimeTranscriber != null)
+        // Idempotency: ensure only one cleanup runs at a time
+        if (Interlocked.Exchange(ref _cleanupInProgress, 1) == 1)
         {
-            _realtimeTranscriber.OnTranscription -= OnRealtimeTranscription;
-            _realtimeTranscriber.OnError -= OnRealtimeError;
-            _realtimeTranscriber.OnDisconnected -= OnRealtimeDisconnected;
+            Logger.Log("CleanupRealtimeStreamingAsync: Already in progress, returning");
+            return;
+        }
 
-            try
-            {
-                await _realtimeTranscriber.DisconnectAsync();
-            }
-            catch { }
+        try
+        {
+            Logger.Log("CleanupRealtimeStreamingAsync: Cleaning up");
 
-            _realtimeTranscriber.Dispose();
+            // Wait for any pending transcription processing to finish (e.g. final message)
+            // This prevents race condition where cleanup runs before HandleRealtimeTranscription updates text
+            await _transcriptionLock.WaitAsync();
+            _transcriptionLock.Release();
+
+            // Take local snapshots, then null out fields to prevent other handlers from using them
+            var transcriber = _realtimeTranscriber;
+            var recorder = _realtimeRecorder;
+            var cts = _transcriberCts;
+
             _realtimeTranscriber = null;
-        }
-
-        if (_realtimeRecorder != null)
-        {
-            _realtimeRecorder.OnAudioChunk -= OnRealtimeAudioChunk;
-            _realtimeRecorder.Dispose();
             _realtimeRecorder = null;
-        }
+            _transcriberCts = null;
 
-        _transcriberCts?.Dispose();
-        _transcriberCts = null;
+            // Unsubscribe and dispose transcriber
+            if (transcriber != null)
+            {
+                transcriber.OnTranscription -= OnRealtimeTranscription;
+                transcriber.OnError -= OnRealtimeError;
+                transcriber.OnDisconnected -= OnRealtimeDisconnected;
 
-        _isRealtimeStreaming = false;
-        StopAnim();
-
-        // Type any remaining text that wasn't typed due to corrections
-        // Run this logic on the UI thread to ensure it processes AFTER any pending HandleRealtimeTranscription
-        // and to access updated text variables safely
-        if (InvokeRequired)
-        {
-            Invoke(
-                new Action(async () =>
+                try
                 {
-                    if (_realtimeTranscriptionText.Length > _lastTypedLength)
+                    await transcriber.DisconnectAsync();
+                }
+                catch { }
+
+                transcriber.Dispose();
+            }
+
+            // Dispose recorder
+            if (recorder != null)
+            {
+                recorder.OnAudioChunk -= OnRealtimeAudioChunk;
+                recorder.OnSilenceDetected -= OnRealtimeSilenceDetected;
+                recorder.Dispose();
+            }
+
+            cts?.Dispose();
+
+            lock (_streamingBuffer)
+            {
+                _streamingBuffer.Clear();
+            }
+
+            lock (_streamingStateLock)
+            {
+                _streamingState = StreamingState.Idle;
+            }
+            _streamingTargetWindow = IntPtr.Zero;
+            _streamingStartTime = DateTime.MinValue;
+            StopAnim();
+
+            // Type any remaining text that wasn't typed due to corrections
+            // Run this logic on the UI thread to ensure it processes AFTER any pending HandleRealtimeTranscription
+            // and to access updated text variables safely
+            if (InvokeRequired)
+            {
+                Invoke(
+                    new Action(async () =>
                     {
-                        var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
-                        Logger.Log(
-                            $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
-                        );
+                        if (_realtimeTranscriptionText.Length > _lastTypedLength)
+                        {
+                            var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
+                            Logger.Log(
+                                $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
+                            );
 
-                        if (remainingText.Length > 5)
-                        {
-                            await _clip.SetTextAndPasteAsync(remainingText);
+                            if (remainingText.Length > 5)
+                            {
+                                await _clip.SetTextAndPasteAsync(remainingText);
+                            }
+                            else
+                            {
+                                TypeTextDirectly(remainingText);
+                            }
                         }
-                        else
-                        {
-                            TypeTextDirectly(remainingText);
-                        }
-                    }
-                })
-            );
-        }
-        else
-        {
-            if (_realtimeTranscriptionText.Length > _lastTypedLength)
-            {
-                var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
-                Logger.Log(
-                    $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
+                    })
                 );
-
-                if (remainingText.Length > 5)
-                {
-                    await _clip.SetTextAndPasteAsync(remainingText);
-                }
-                else
-                {
-                    TypeTextDirectly(remainingText);
-                }
             }
-        }
-
-        if (!string.IsNullOrEmpty(_realtimeTranscriptionText))
-        {
-            try
+            else
             {
-                NotificationService.ShowSuccess("Real-time transcription complete.");
-            }
-            catch { }
-        }
+                if (_realtimeTranscriptionText.Length > _lastTypedLength)
+                {
+                    var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
+                    Logger.Log(
+                        $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
+                    );
 
-        Logger.Log("CleanupRealtimeStreamingAsync: Done");
+                    if (remainingText.Length > 5)
+                    {
+                        await _clip.SetTextAndPasteAsync(remainingText);
+                    }
+                    else
+                    {
+                        TypeTextDirectly(remainingText);
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(_realtimeTranscriptionText))
+            {
+                try
+                {
+                    NotificationService.ShowSuccess("Real-time transcription complete.");
+                }
+                catch { }
+            }
+
+            Logger.Log("CleanupRealtimeStreamingAsync: Done");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _cleanupInProgress, 0);
+        }
     }
 
     private void ReloadConfigFromDisk()
@@ -1888,6 +2096,11 @@ public class MainForm : Form
             $"RecordAudioAsync started. PreferredMic: {_currentConfig.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {_currentConfig.Transcriber.EnableVAD}, VADThreshold: {_currentConfig.Transcriber.SilenceThresholdMs}ms"
         );
         using var recorder = new AudioRecorder(_currentConfig.Transcriber.PreferredMicrophoneIndex);
+        recorder.SetVadThresholds(
+            _currentConfig.Transcriber.VadSilenceThreshold,
+            _currentConfig.Transcriber.VadActivationThreshold,
+            _currentConfig.Transcriber.VadSustainThreshold
+        );
         try
         {
             // maxDurationMs = 0 means record until cancellation (hotkey-based toggle)
