@@ -62,7 +62,16 @@ internal static class Program
             // The WindowsFormsSynchronizationContext is installed when the first Control is created
             ClipboardService.Initialize();
 
-            Application.Run(mainForm);
+            // Use ApplicationContext to run message loop without showing the form.
+            // This is the standard pattern for tray-only applications.
+            var context = new ApplicationContext();
+            mainForm.FormClosed += (_, __) => context.ExitThread();
+
+            // Create handle without showing the form (needed for hotkeys and message pump)
+            mainForm.CreateControl();
+            _ = mainForm.Handle; // Ensure handle is created
+
+            Application.Run(context);
         }
         finally
         {

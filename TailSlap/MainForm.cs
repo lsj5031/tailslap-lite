@@ -58,6 +58,7 @@ public class MainForm : Form
 
     private ToolStripMenuItem? _llmToggleItem;
     private ToolStripMenuItem? _transcriberToggleItem;
+    private readonly bool _allowVisible = false; // intentionally always false for tray-only app
 
     public MainForm(
         IConfigService config,
@@ -94,9 +95,15 @@ public class MainForm : Form
         DoubleBuffered = true;
         UpdateStyles();
 
+        // Tray-only: hide from taskbar, minimize, zero size, off-screen
         ShowInTaskbar = false;
         WindowState = FormWindowState.Minimized;
         Visible = false;
+        FormBorderStyle = FormBorderStyle.None;
+        Size = new Size(0, 0);
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(-10000, -10000);
+        Opacity = 0;
 
         _currentConfig = _config.CreateValidatedCopy();
 
@@ -876,6 +883,27 @@ public class MainForm : Form
             _tray.Text = text;
         }
         catch { }
+    }
+
+    protected override void SetVisibleCore(bool value)
+    {
+        // Prevent the form from becoming visible (tray-only app).
+        // Application.Run() tries to show the form; we block that here.
+        // We still need to call base once to create the handle for hotkeys.
+        if (!_allowVisible && IsHandleCreated)
+            return;
+        base.SetVisibleCore(false);
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            // WS_EX_TOOLWINDOW: prevents appearing in taskbar and Alt+Tab
+            cp.ExStyle |= 0x80;
+            return cp;
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
