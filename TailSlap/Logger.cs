@@ -19,6 +19,9 @@ public static class Logger
     private static readonly Task WriterTask;
     private static volatile bool _shuttingDown = false;
     private static volatile int _droppedCount = 0;
+    private static int _queueSize = 0;
+
+    public static bool VerboseEnabled { get; set; } = false;
 
     static Logger()
     {
@@ -30,23 +33,31 @@ public static class Logger
         try
         {
             // Backpressure: if queue is too large, drop oldest messages
-            while (LogQueue.Count >= MaxQueueSize)
+            while (Interlocked.CompareExchange(ref _queueSize, 0, 0) >= MaxQueueSize)
             {
                 if (LogQueue.TryDequeue(out _))
                 {
+                    Interlocked.Decrement(ref _queueSize);
                     Interlocked.Increment(ref _droppedCount);
                 }
                 else
                 {
-                    break; // Queue became empty, stop trying
+                    break;
                 }
             }
 
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}";
             LogQueue.Enqueue(line);
+            Interlocked.Increment(ref _queueSize);
             WriterSignal.Release();
         }
         catch { }
+    }
+
+    public static void LogVerbose(string message)
+    {
+        if (VerboseEnabled)
+            Log(message);
     }
 
     private static async Task BackgroundWriterLoop()
@@ -67,7 +78,7 @@ public static class Logger
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
 
-                    if (LogQueue.Count > 0)
+                    if (Interlocked.CompareExchange(ref _queueSize, 0, 0) > 0)
                     {
                         using var stream = new FileStream(
                             LogPath,
@@ -89,6 +100,7 @@ public static class Logger
                         int itemsWritten = 0;
                         while (LogQueue.TryDequeue(out var line) && itemsWritten < 100)
                         {
+                            Interlocked.Decrement(ref _queueSize);
                             writer.WriteLine(line);
                             itemsWritten++;
                         }
@@ -104,6 +116,7 @@ public static class Logger
             // Final flush on shutdown
             while (LogQueue.TryDequeue(out var line))
             {
+                Interlocked.Decrement(ref _queueSize);
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
@@ -124,7 +137,7 @@ public static class Logger
         {
             // Wait a bit for the writer to process remaining items
             int attempts = 0;
-            while (LogQueue.Count > 0 && attempts < 10)
+            while (Interlocked.CompareExchange(ref _queueSize, 0, 0) > 0 && attempts < 10)
             {
                 Thread.Sleep(50);
                 attempts++;
@@ -152,6 +165,8 @@ public static class Logger
 public sealed class LoggerServiceAdapter : ILoggerService
 {
     public void Log(string message) => Logger.Log(message);
+
+    public void LogVerbose(string message) => Logger.LogVerbose(message);
 
     public void Flush() => Logger.Flush();
 

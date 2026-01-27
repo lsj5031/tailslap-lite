@@ -58,7 +58,9 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
     "AutoPaste": true,
     "EnableVAD": false,
     "SilenceThresholdMs": 1000,
-    "PreferredMicrophoneIndex": -1
+    "PreferredMicrophoneIndex": -1,
+    "UseWebRtcVad": true,
+    "WebRtcVadSensitivity": 2
   }
 }
 ```
@@ -72,6 +74,8 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
 - **Llm.Model**: Model name
 - **Llm.Temperature**: Creativity (0.0-1.0)
 - **Llm.ApiKey**: API key (set via code, will be encrypted)
+- **Transcriber.UseWebRtcVad**: Use ML-based WebRTC VAD for smarter speech detection (default: true)
+- **Transcriber.WebRtcVadSensitivity**: VAD sensitivity (0=Low, 1=Medium, 2=High, 3=VeryHigh)
 
 ### Supported LLM Providers
 

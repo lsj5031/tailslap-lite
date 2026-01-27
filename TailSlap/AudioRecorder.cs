@@ -24,6 +24,10 @@ public sealed class AudioRecorder : IDisposable
     private const int MM_WIM_DATA = 0x3C0;
     private const uint WHDR_DONE = 0x00000001; // Buffer is done
 
+    // WebRTC VAD for smarter speech detection
+    private WebRtcVadService? _webRtcVad;
+    private bool _useWebRtcVad = true; // Enable by default
+
     // WinMM P/Invoke
     [DllImport("winmm.dll")]
     private static extern int waveInGetNumDevs();
@@ -125,12 +129,45 @@ public sealed class AudioRecorder : IDisposable
         _bufferHandles = new GCHandle[BUFFER_COUNT];
         _waveHeaders = new WAVEHDR[BUFFER_COUNT];
         _recordedData = new MemoryStream();
+        InitializeWebRtcVad();
     }
 
     public AudioRecorder(int preferredDeviceIndex)
         : this()
     {
         _preferredDeviceIndex = preferredDeviceIndex;
+    }
+
+    private void InitializeWebRtcVad()
+    {
+        try
+        {
+            _webRtcVad = new WebRtcVadService(VadSensitivity.High);
+            Logger.Log("AudioRecorder: WebRTC VAD initialized (sensitivity=High)");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log(
+                $"AudioRecorder: WebRTC VAD initialization failed, falling back to RMS - {ex.Message}"
+            );
+            _webRtcVad = null;
+            _useWebRtcVad = false;
+        }
+    }
+
+    public void SetWebRtcVadSensitivity(VadSensitivity sensitivity)
+    {
+        if (_webRtcVad != null)
+        {
+            _webRtcVad.SetSensitivity(sensitivity);
+            Logger.Log($"AudioRecorder: WebRTC VAD sensitivity set to {sensitivity}");
+        }
+    }
+
+    public void SetUseWebRtcVad(bool enabled)
+    {
+        _useWebRtcVad = enabled && _webRtcVad != null;
+        Logger.Log($"AudioRecorder: WebRTC VAD {(_useWebRtcVad ? "enabled" : "disabled")}");
     }
 
     public static List<string> GetAvailableMicrophones()
@@ -427,16 +464,17 @@ public sealed class AudioRecorder : IDisposable
                         // Check VAD if enabled (only during active recording, not final drain to avoid cutting off end)
                         if (enableVAD && !isFinalDrain && data.Length >= 2)
                         {
-                            float rms = CalculateRMS(data);
+                            bool isSpeech = DetectSpeech(data, out float rms);
                             int bufferDurationMs = data.Length / BYTES_PER_MS;
-                            if (rms < _vadSilenceThreshold)
+
+                            if (!isSpeech)
                             {
                                 // Only count silence if we've detected speech first
                                 if (hasDetectedSpeech)
                                 {
                                     consecutiveSilenceMs += bufferDurationMs;
                                     Logger.Log(
-                                        $"VAD[Record]: Silence accumulating: {consecutiveSilenceMs}ms"
+                                        $"VAD[Record]: Silence accumulating: {consecutiveSilenceMs}ms (WebRTC={_useWebRtcVad})"
                                     );
                                 }
                                 else
@@ -448,7 +486,9 @@ public sealed class AudioRecorder : IDisposable
                             {
                                 if (!hasDetectedSpeech)
                                 {
-                                    Logger.Log($"VAD[Record]: Speech detected, rms={rms:F0}");
+                                    Logger.Log(
+                                        $"VAD[Record]: Speech detected (WebRTC={_useWebRtcVad}, rms={rms:F0})"
+                                    );
                                 }
                                 hasDetectedSpeech = true;
                                 consecutiveSilenceMs = 0;
@@ -512,6 +552,54 @@ public sealed class AudioRecorder : IDisposable
         }
         int sampleCount = audioBuffer.Length / 2;
         return sampleCount > 0 ? (float)Math.Sqrt(sum / sampleCount) : 0;
+    }
+
+    private bool DetectSpeech(byte[] audioData, out float rms)
+    {
+        rms = CalculateRMS(audioData);
+
+        // Use WebRTC VAD if available and enabled
+        if (_useWebRtcVad && _webRtcVad != null)
+        {
+            return _webRtcVad.HasSpeech(audioData);
+        }
+
+        // Fallback to RMS-based detection
+        return rms > _vadSilenceThreshold;
+    }
+
+    private bool DetectSpeechWithHysteresis(byte[] audioData, bool hasDetectedSpeech, out float rms)
+    {
+        rms = CalculateRMS(audioData);
+
+        // Use WebRTC VAD if available and enabled
+        if (_useWebRtcVad && _webRtcVad != null)
+        {
+            bool webRtcSpeech = _webRtcVad.HasSpeech(audioData);
+
+            // Hybrid approach: use WebRTC for activation, but also consider RMS for sustain
+            // This helps catch edge cases where WebRTC might miss soft speech endings
+            if (!hasDetectedSpeech)
+            {
+                // For activation, trust WebRTC VAD
+                return webRtcSpeech;
+            }
+            else
+            {
+                // For sustain, use either WebRTC OR high RMS (more lenient to avoid cutting off)
+                return webRtcSpeech || rms > _vadSustainThreshold;
+            }
+        }
+
+        // Fallback to RMS-based hysteresis detection
+        if (!hasDetectedSpeech)
+        {
+            return rms > _vadActivationThreshold;
+        }
+        else
+        {
+            return rms > _vadSustainThreshold;
+        }
     }
 
     private void Stop()
@@ -870,66 +958,49 @@ public sealed class AudioRecorder : IDisposable
 
                     if (enableVAD && data.Length >= 2)
                     {
-                        float rms = CalculateRMS(data);
+                        bool isSpeech = DetectSpeechWithHysteresis(
+                            data,
+                            hasDetectedSpeech,
+                            out float rms
+                        );
                         int bufferDurationMs = data.Length / BYTES_PER_MS;
 
                         // DEBUG: Only log every 20th buffer to reduce noise (1 second of audio)
                         if (_totalBuffersProcessed % 20 == 0)
                         {
                             string speechState = hasDetectedSpeech ? "ACTIVE" : "WAITING";
-                            int threshold = hasDetectedSpeech
-                                ? _vadSustainThreshold
-                                : _vadActivationThreshold;
+                            string vadType = _useWebRtcVad ? "WebRTC" : "RMS";
                             Logger.Log(
-                                $"VAD[DEBUG]: buf#{_totalBuffersProcessed} RMS={rms:F0} thresh={threshold} state={speechState} silence={consecutiveSilenceMs}ms"
+                                $"VAD[DEBUG]: buf#{_totalBuffersProcessed} {vadType} speech={isSpeech} RMS={rms:F0} state={speechState} silence={consecutiveSilenceMs}ms"
                             );
-                        }
-
-                        // Hysteresis Logic:
-                        // 1. To START detecting speech, RMS must exceed ACTIVATION threshold (ignoring background noise)
-                        // 2. To CONTINUE detecting speech, RMS must exceed SUSTAIN threshold (catching softer speech endings)
-                        // 3. Otherwise, accumulate silence
-
-                        bool isSpeech = false;
-                        if (!hasDetectedSpeech)
-                        {
-                            if (rms > _vadActivationThreshold)
-                            {
-                                isSpeech = true;
-                                _buffersWithSpeech++;
-                                Logger.Log(
-                                    $"VAD[Stream]: *** Speech ACTIVATED *** (RMS={rms:F0} > {_vadActivationThreshold})"
-                                );
-                            }
-                        }
-                        else
-                        {
-                            if (rms > _vadSustainThreshold)
-                            {
-                                isSpeech = true;
-                                _buffersWithSpeech++;
-                                // Log when silence was being accumulated
-                                if (consecutiveSilenceMs > 0)
-                                {
-                                    Logger.Log(
-                                        $"VAD[Stream]: Speech SUSTAINED (RMS={rms:F0} > {_vadSustainThreshold}), silence reset from {consecutiveSilenceMs}ms"
-                                    );
-                                }
-                            }
-                            else
-                            {
-                                _buffersWithSilence++;
-                            }
                         }
 
                         if (isSpeech)
                         {
+                            if (!hasDetectedSpeech)
+                            {
+                                _buffersWithSpeech++;
+                                Logger.Log(
+                                    $"VAD[Stream]: *** Speech ACTIVATED *** (WebRTC={_useWebRtcVad}, RMS={rms:F0})"
+                                );
+                            }
+                            else
+                            {
+                                _buffersWithSpeech++;
+                                if (consecutiveSilenceMs > 0)
+                                {
+                                    Logger.Log(
+                                        $"VAD[Stream]: Speech SUSTAINED (WebRTC={_useWebRtcVad}, RMS={rms:F0}), silence reset from {consecutiveSilenceMs}ms"
+                                    );
+                                }
+                            }
                             hasDetectedSpeech = true;
                             consecutiveSilenceMs = 0;
                             _lastSpeechTime = now;
                         }
                         else
                         {
+                            _buffersWithSilence++;
                             // Only accumulate silence if we have actually started speaking at least once
                             if (hasDetectedSpeech)
                             {
@@ -939,7 +1010,7 @@ public sealed class AudioRecorder : IDisposable
                                 if (consecutiveSilenceMs % 500 < bufferDurationMs)
                                 {
                                     Logger.Log(
-                                        $"VAD[Stream]: Silence milestone: {consecutiveSilenceMs}ms / {silenceThresholdMs}ms (speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed})"
+                                        $"VAD[Stream]: Silence milestone: {consecutiveSilenceMs}ms / {silenceThresholdMs}ms (WebRTC={_useWebRtcVad})"
                                     );
                                 }
 
@@ -1010,6 +1081,8 @@ public sealed class AudioRecorder : IDisposable
             return;
         Stop();
         _recordedData?.Dispose();
+        _webRtcVad?.Dispose();
+        _webRtcVad = null;
         _disposed = true;
     }
 }

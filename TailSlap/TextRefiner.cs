@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using TailSlap;
 
 public sealed class TextRefiner : ITextRefiner
 {
@@ -75,7 +75,7 @@ public sealed class TextRefiner : ITextRefiner
         try
         {
             Logger.Log(
-                $"LLM input fingerprint: len={text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"
+                $"LLM input fingerprint: len={text?.Length ?? 0}, sha256={Hashing.Sha256Hex(text ?? string.Empty)}"
             );
         }
         catch { }
@@ -178,7 +178,7 @@ public sealed class TextRefiner : ITextRefiner
                 try
                 {
                     Logger.Log(
-                        $"LLM output fingerprint: len={result.Length}, sha256={Sha256Hex(result)}"
+                        $"LLM output fingerprint: len={result.Length}, sha256={Hashing.Sha256Hex(result)}"
                     );
                 }
                 catch { }
@@ -239,21 +239,4 @@ public sealed class TextRefiner : ITextRefiner
     }
 
     private static string Combine(string a, string b) => a.EndsWith("/") ? a + b : a + "/" + b;
-
-    private static string Sha256Hex(string s)
-    {
-        if (string.IsNullOrEmpty(s))
-            return "";
-        try
-        {
-            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
-            Span<byte> hash = stackalloc byte[32];
-            SHA256.HashData(inputBytes, hash);
-            return Convert.ToHexString(hash);
-        }
-        catch
-        {
-            return "";
-        }
-    }
 }

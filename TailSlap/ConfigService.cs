@@ -96,6 +96,10 @@ public sealed class TranscriberConfig
     public int VadSustainThreshold { get; set; } = 550; // Threshold to CONTINUE detecting speech
     public int VadSilenceThreshold { get; set; } = 120; // Threshold for standard recording silence detection
 
+    // WebRTC VAD (smarter ML-based speech detection)
+    public bool UseWebRtcVad { get; set; } = true; // Use WebRTC VAD instead of RMS thresholds
+    public int WebRtcVadSensitivity { get; set; } = 2; // 0=Low, 1=Medium, 2=High, 3=VeryHigh
+
     [JsonIgnore]
     public string? ApiKey
     {
@@ -189,6 +193,8 @@ public sealed class TranscriberConfig
             VadActivationThreshold = VadActivationThreshold,
             VadSustainThreshold = VadSustainThreshold,
             VadSilenceThreshold = VadSilenceThreshold,
+            UseWebRtcVad = UseWebRtcVad,
+            WebRtcVadSensitivity = WebRtcVadSensitivity,
         };
     }
 }

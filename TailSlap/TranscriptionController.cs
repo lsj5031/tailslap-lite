@@ -14,10 +14,11 @@ public sealed class TranscriptionController : ITranscriptionController
     private readonly IHistoryService _history;
 
     private bool _isTranscribing;
+    private bool _isRecording;
     private CancellationTokenSource? _transcriberCts;
 
     public bool IsTranscribing => _isTranscribing;
-    public bool IsRecording => _transcriberCts != null && !_transcriberCts.IsCancellationRequested;
+    public bool IsRecording => _isRecording;
 
     public event Action? OnStarted;
     public event Action? OnCompleted;
@@ -133,6 +134,7 @@ public sealed class TranscriptionController : ITranscriptionController
             try
             {
                 Logger.Log("Starting audio recording from microphone");
+                _isRecording = true;
                 recordingStats = await RecordAudioAsync(audioFilePath, cfg);
 
                 if (recordingStats.SilenceDetected)
@@ -168,6 +170,10 @@ public sealed class TranscriptionController : ITranscriptionController
                 );
                 Logger.Log($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
                 return;
+            }
+            finally
+            {
+                _isRecording = false;
             }
 
             NotificationService.ShowInfo("Sending to transcriber...");
@@ -234,7 +240,7 @@ public sealed class TranscriptionController : ITranscriptionController
     private async Task<RecordingStats> RecordAudioAsync(string audioFilePath, AppConfig cfg)
     {
         Logger.Log(
-            $"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms, VADSensitivity: Activ={cfg.Transcriber.VadActivationThreshold}, Sust={cfg.Transcriber.VadSustainThreshold}, Sil={cfg.Transcriber.VadSilenceThreshold}"
+            $"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms, VADSensitivity: Activ={cfg.Transcriber.VadActivationThreshold}, Sust={cfg.Transcriber.VadSustainThreshold}, Sil={cfg.Transcriber.VadSilenceThreshold}, WebRtcVAD={cfg.Transcriber.UseWebRtcVad}"
         );
 
         using var recorder = _audioRecorderFactory.Create(cfg.Transcriber.PreferredMicrophoneIndex);
@@ -243,6 +249,13 @@ public sealed class TranscriptionController : ITranscriptionController
             cfg.Transcriber.VadActivationThreshold,
             cfg.Transcriber.VadSustainThreshold
         );
+
+        // Configure WebRTC VAD
+        recorder.SetUseWebRtcVad(cfg.Transcriber.UseWebRtcVad);
+        if (cfg.Transcriber.UseWebRtcVad)
+        {
+            recorder.SetWebRtcVadSensitivity((VadSensitivity)cfg.Transcriber.WebRtcVadSensitivity);
+        }
 
         try
         {

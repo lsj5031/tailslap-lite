@@ -145,30 +145,7 @@ public class MainForm : Form
         {
             _currentConfig.Transcriber.Enabled = _transcriberToggleItem.Checked;
             _config.Save(_currentConfig);
-
-            if (_transcriberToggleItem.Checked)
-            {
-                RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-                RegisterHotkey(
-                    _streamingTranscriberMods,
-                    _streamingTranscriberVk,
-                    STREAMING_TRANSCRIBER_HOTKEY_ID
-                );
-            }
-            else
-            {
-                try
-                {
-                    UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
-                }
-                catch { }
-                try
-                {
-                    UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
-                }
-                catch { }
-            }
-
+            ApplyAllHotkeyRegistrations();
             NotificationService.ShowInfo(
                 _transcriberToggleItem.Checked
                     ? "Transcription enabled."
@@ -909,16 +886,7 @@ public class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
-        if (_currentConfig.Transcriber.Enabled)
-        {
-            RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-            RegisterHotkey(
-                _streamingTranscriberMods,
-                _streamingTranscriberVk,
-                STREAMING_TRANSCRIBER_HOTKEY_ID
-            );
-        }
+        ApplyAllHotkeyRegistrations();
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
@@ -971,19 +939,27 @@ public class MainForm : Form
         base.WndProc(ref m);
     }
 
+    private static void SafeFireAndForget(Task task)
+    {
+        task.ContinueWith(
+            t => Logger.Log($"Unhandled async error: {t.Exception}"),
+            TaskContinuationOptions.OnlyOnFaulted
+        );
+    }
+
     private void TriggerRefine()
     {
-        _ = _refinementController.TriggerRefineAsync();
+        SafeFireAndForget(_refinementController.TriggerRefineAsync());
     }
 
     private void TriggerTranscribe()
     {
-        _ = _transcriptionController.TriggerTranscribeAsync();
+        SafeFireAndForget(_transcriptionController.TriggerTranscribeAsync());
     }
 
     private void TriggerStreamingTranscribe()
     {
-        _ = _realtimeTranscriptionController.TriggerStreamingAsync();
+        SafeFireAndForget(_realtimeTranscriptionController.TriggerStreamingAsync());
     }
 
     private void ReloadConfigFromDisk()
@@ -999,20 +975,7 @@ public class MainForm : Form
         try
         {
             Logger.Log("Detected config file change on disk. Reloading...");
-            var newConfig = _config.CreateValidatedCopy();
-
-            bool refinementHotkeyChanged =
-                newConfig.Hotkey.Modifiers != _currentMods || newConfig.Hotkey.Key != _currentVk;
-            bool transcriberHotkeyChanged =
-                newConfig.TranscriberHotkey.Modifiers != _transcriberMods
-                || newConfig.TranscriberHotkey.Key != _transcriberVk;
-            bool streamingTranscriberHotkeyChanged =
-                newConfig.StreamingTranscriberHotkey.Modifiers != _streamingTranscriberMods
-                || newConfig.StreamingTranscriberHotkey.Key != _streamingTranscriberVk;
-            bool transcriberStatusChanged =
-                newConfig.Transcriber.Enabled != _currentConfig.Transcriber.Enabled;
-
-            _currentConfig = newConfig;
+            _currentConfig = _config.CreateValidatedCopy();
 
             // Update toggle states
             if (_llmToggleItem != null)
@@ -1020,39 +983,7 @@ public class MainForm : Form
             if (_transcriberToggleItem != null)
                 _transcriberToggleItem.Checked = _currentConfig.Transcriber.Enabled;
 
-            if (refinementHotkeyChanged)
-            {
-                UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
-                _currentMods = _currentConfig.Hotkey.Modifiers;
-                _currentVk = _currentConfig.Hotkey.Key;
-                RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
-            }
-
-            if (transcriberHotkeyChanged || transcriberStatusChanged)
-            {
-                UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
-                if (_currentConfig.Transcriber.Enabled)
-                {
-                    _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
-                    _transcriberVk = _currentConfig.TranscriberHotkey.Key;
-                    RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-                }
-            }
-
-            if (streamingTranscriberHotkeyChanged || transcriberStatusChanged)
-            {
-                UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
-                if (_currentConfig.Transcriber.Enabled)
-                {
-                    _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
-                    _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
-                    RegisterHotkey(
-                        _streamingTranscriberMods,
-                        _streamingTranscriberVk,
-                        STREAMING_TRANSCRIBER_HOTKEY_ID
-                    );
-                }
-            }
+            ApplyAllHotkeyRegistrations();
 
             NotificationService.ShowInfo("Configuration reloaded from disk.");
             Logger.Log("Configuration hot-reload complete.");
@@ -1132,6 +1063,44 @@ public class MainForm : Form
         }
     }
 
+    private void ApplyAllHotkeyRegistrations()
+    {
+        try
+        {
+            UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
+            UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
+            UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
+
+        _currentMods = _currentConfig.Hotkey.Modifiers;
+        _currentVk = _currentConfig.Hotkey.Key;
+        RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
+
+        _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+        _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+        _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
+        _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
+
+        if (_currentConfig.Transcriber.Enabled)
+        {
+            RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+            RegisterHotkey(
+                _streamingTranscriberMods,
+                _streamingTranscriberVk,
+                STREAMING_TRANSCRIBER_HOTKEY_ID
+            );
+        }
+    }
+
     private void ShowSettings(AppConfig cfg)
     {
         _isSettingsOpen = true;
@@ -1157,49 +1126,7 @@ public class MainForm : Form
                 if (_transcriberToggleItem != null)
                     _transcriberToggleItem.Checked = _currentConfig.Transcriber.Enabled;
 
-                Logger.Log(
-                    $"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"
-                );
-                Logger.Log(
-                    $"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}"
-                );
-
-                try
-                {
-                    UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
-                }
-                catch { }
-                _currentMods = _currentConfig.Hotkey.Modifiers;
-                _currentVk = _currentConfig.Hotkey.Key;
-                RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
-
-                try
-                {
-                    UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
-                }
-                catch { }
-                _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
-                _transcriberVk = _currentConfig.TranscriberHotkey.Key;
-                if (_currentConfig.Transcriber.Enabled)
-                {
-                    RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-                }
-
-                try
-                {
-                    UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
-                }
-                catch { }
-                _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
-                _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
-                if (_currentConfig.Transcriber.Enabled)
-                {
-                    RegisterHotkey(
-                        _streamingTranscriberMods,
-                        _streamingTranscriberVk,
-                        STREAMING_TRANSCRIBER_HOTKEY_ID
-                    );
-                }
+                ApplyAllHotkeyRegistrations();
 
                 NotificationService.ShowSuccess("Settings saved.");
             }

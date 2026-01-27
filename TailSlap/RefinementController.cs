@@ -1,8 +1,7 @@
 using System;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using TailSlap;
 
 public sealed class RefinementController : IRefinementController
 {
@@ -98,7 +97,7 @@ public sealed class RefinementController : IRefinementController
 
             var text = await _clip.CaptureSelectionOrClipboardAsync(cfg.UseClipboardFallback);
             Logger.Log(
-                $"Captured length: {text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"
+                $"Captured length: {text?.Length ?? 0}, sha256={Hashing.Sha256Hex(text ?? string.Empty)}"
             );
 
             if (string.IsNullOrWhiteSpace(text))
@@ -112,7 +111,7 @@ public sealed class RefinementController : IRefinementController
             var refiner = _textRefinerFactory.Create(cfg.Llm);
             var refined = await refiner.RefineAsync(text, ct);
             Logger.Log(
-                $"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"
+                $"Refined length: {refined?.Length ?? 0}, sha256={Hashing.Sha256Hex(refined ?? string.Empty)}"
             );
 
             if (string.IsNullOrWhiteSpace(refined))
@@ -166,23 +165,6 @@ public sealed class RefinementController : IRefinementController
             NotificationService.ShowError("Refinement failed: " + ex.Message);
             Logger.Log("Error: " + ex.Message);
             return false;
-        }
-    }
-
-    private static string Sha256Hex(string s)
-    {
-        if (string.IsNullOrEmpty(s))
-            return "";
-        try
-        {
-            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
-            Span<byte> hash = stackalloc byte[32];
-            SHA256.HashData(inputBytes, hash);
-            return Convert.ToHexString(hash);
-        }
-        catch
-        {
-            return "";
         }
     }
 }

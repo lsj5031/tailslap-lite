@@ -142,7 +142,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             );
 
             Logger.Log(
-                $"StartAsync: VAD settings - Activ={cfg.Transcriber.VadActivationThreshold}, Sust={cfg.Transcriber.VadSustainThreshold}, Sil={cfg.Transcriber.VadSilenceThreshold}"
+                $"StartAsync: VAD settings - Activ={cfg.Transcriber.VadActivationThreshold}, Sust={cfg.Transcriber.VadSustainThreshold}, Sil={cfg.Transcriber.VadSilenceThreshold}, WebRtcVAD={cfg.Transcriber.UseWebRtcVad}"
             );
 
             _realtimeRecorder.SetVadThresholds(
@@ -150,6 +150,15 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 cfg.Transcriber.VadActivationThreshold,
                 cfg.Transcriber.VadSustainThreshold
             );
+
+            // Configure WebRTC VAD
+            _realtimeRecorder.SetUseWebRtcVad(cfg.Transcriber.UseWebRtcVad);
+            if (cfg.Transcriber.UseWebRtcVad)
+            {
+                _realtimeRecorder.SetWebRtcVadSensitivity(
+                    (VadSensitivity)cfg.Transcriber.WebRtcVadSensitivity
+                );
+            }
 
             _realtimeRecorder.OnAudioChunk += HandleRealtimeAudioChunk;
             _realtimeRecorder.OnSilenceDetected += HandleRealtimeSilenceDetected;

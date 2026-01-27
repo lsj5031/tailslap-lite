@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +9,7 @@ using System.Threading.Tasks;
 
 public sealed class RealtimeTranscriber : IDisposable
 {
-    private readonly record struct QueueItem(byte[]? Audio, bool IsStop);
+    private readonly record struct QueueItem(byte[]? Buffer, int Count, bool IsStop);
 
     private readonly string _wsEndpoint;
     private ClientWebSocket? _ws;
@@ -83,31 +84,9 @@ public sealed class RealtimeTranscriber : IDisposable
         }
     }
 
-    public async Task SendAudioChunkAsync(byte[] pcm16Data, CancellationToken ct = default)
+    public Task SendAudioChunkAsync(byte[] pcm16Data, CancellationToken ct = default)
     {
-        if (_disposed)
-            return;
-
-        if (_ws?.State != WebSocketState.Open)
-        {
-            Logger.Log("RealtimeTranscriber: Cannot send audio - not connected");
-            return;
-        }
-
-        try
-        {
-            await _ws.SendAsync(
-                    new ArraySegment<byte>(pcm16Data),
-                    WebSocketMessageType.Binary,
-                    endOfMessage: true,
-                    ct
-                )
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"RealtimeTranscriber: SendAudioChunkAsync failed - {ex.Message}");
-        }
+        return SendAudioChunkAsync(new ArraySegment<byte>(pcm16Data), ct);
     }
 
     public Task SendAudioChunkAsync(ArraySegment<byte> pcm16Data, CancellationToken ct = default)
@@ -117,14 +96,12 @@ public sealed class RealtimeTranscriber : IDisposable
 
         try
         {
-            // Non-blocking write. If channel full, drops oldest automatically (configured in options)
-            // Note: ArraySegment is a struct pointing to buffer. We must copy it because
-            // the buffer might be reused by AudioRecorder before SendLoop reads it.
-            byte[] dataCopy = pcm16Data.ToArray();
+            var rented = ArrayPool<byte>.Shared.Rent(pcm16Data.Count);
+            Buffer.BlockCopy(pcm16Data.Array!, pcm16Data.Offset, rented, 0, pcm16Data.Count);
 
-            if (!_sendChannel.Writer.TryWrite(new QueueItem(dataCopy, false)))
+            if (!_sendChannel.Writer.TryWrite(new QueueItem(rented, pcm16Data.Count, false)))
             {
-                // Should not happen with DropOldest, but good safety
+                ArrayPool<byte>.Shared.Return(rented);
                 Interlocked.Increment(ref _chunksSkipped);
             }
         }
@@ -152,6 +129,16 @@ public sealed class RealtimeTranscriber : IDisposable
                         {
                             if (item.IsStop)
                             {
+                                if (item.Buffer != null)
+                                {
+                                    await _ws.SendAsync(
+                                            new ArraySegment<byte>(item.Buffer, 0, item.Count),
+                                            WebSocketMessageType.Binary,
+                                            endOfMessage: true,
+                                            ct
+                                        )
+                                        .ConfigureAwait(false);
+                                }
                                 var stopMsg = Encoding.UTF8.GetBytes("{\"action\":\"stop\"}");
                                 await _ws.SendAsync(
                                         new ArraySegment<byte>(stopMsg),
@@ -161,15 +148,16 @@ public sealed class RealtimeTranscriber : IDisposable
                                     )
                                     .ConfigureAwait(false);
                             }
-                            else if (item.Audio != null)
+                            else if (item.Buffer != null)
                             {
                                 await _ws.SendAsync(
-                                        new ArraySegment<byte>(item.Audio),
+                                        new ArraySegment<byte>(item.Buffer, 0, item.Count),
                                         WebSocketMessageType.Binary,
                                         endOfMessage: true,
                                         ct
                                     )
                                     .ConfigureAwait(false);
+                                ArrayPool<byte>.Shared.Return(item.Buffer);
                                 Interlocked.Increment(ref _chunksSent);
                             }
                         }
@@ -208,17 +196,11 @@ public sealed class RealtimeTranscriber : IDisposable
         {
             Logger.Log("RealtimeTranscriber: Sending silence padding and stop signal");
 
-            // Send silence padding via channel to maintain order
-            var silence = new byte[32000]; // 1s silence
             if (_sendChannel != null)
             {
+                var silence = new byte[32000]; // 1s silence
                 await _sendChannel
-                    .Writer.WriteAsync(new QueueItem(silence, false), ct)
-                    .ConfigureAwait(false);
-
-                // Send stop command via channel
-                await _sendChannel
-                    .Writer.WriteAsync(new QueueItem(null, true), ct)
+                    .Writer.WriteAsync(new QueueItem(silence, silence.Length, true), ct)
                     .ConfigureAwait(false);
             }
         }

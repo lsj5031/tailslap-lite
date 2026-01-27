@@ -38,6 +38,7 @@ This document contains internal development information for TailSlap contributor
 - **Resource Management**:
    - `SafeWaveInHandle`: RAII wrapper for WinMM wave input handle safety
    - `AudioRecorder`: Handles WinMM audio recording with Voice Activity Detection (VAD) and real-time streaming support
+   - `WebRtcVadService`: ML-based voice activity detection using Google's WebRTC VAD (GMM-based) via WebRtcVadSharp
 - **Serialization**: `TailSlapJsonContext` (System.Text.Json source-generated context for AOT-friendly, reflection-free serialization)
 - **Single-instance mutex** prevents multiple app instances
 - **Global hotkey registration** (default Ctrl+Alt+R, user-customizable)

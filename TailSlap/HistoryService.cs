@@ -25,6 +25,10 @@ public sealed class HistoryService : IHistoryService
         TypeInfoResolver = TailSlapJsonContext.Default,
     };
 
+    private int _refinementAppendCount = 0;
+    private int _transcriptionAppendCount = 0;
+    private const int TrimInterval = 10;
+
     private static string EncryptString(string plaintext)
     {
         if (string.IsNullOrEmpty(plaintext))
@@ -82,7 +86,12 @@ public sealed class HistoryService : IHistoryService
             int entrySize = line.Length;
             File.AppendAllText(FilePath, line + Environment.NewLine);
             DiagnosticsEventSource.Log.HistoryAppend("refinement", entrySize);
-            Trim();
+            _refinementAppendCount++;
+            if (_refinementAppendCount >= TrimInterval)
+            {
+                _refinementAppendCount = 0;
+                Trim();
+            }
         }
         catch (Exception ex)
         {
@@ -158,73 +167,7 @@ public sealed class HistoryService : IHistoryService
 
     private void Trim()
     {
-        try
-        {
-            if (!File.Exists(FilePath))
-                return;
-
-            // Read raw lines without decrypting to preserve original ciphertext
-            var allLines = new List<string>();
-            using (
-                var stream = new FileStream(
-                    FilePath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.ReadWrite
-                )
-            )
-            using (var reader = new StreamReader(stream))
-            {
-                string? line;
-                while ((line = reader.ReadLine()) != null)
-                {
-                    if (!string.IsNullOrWhiteSpace(line))
-                        allLines.Add(line);
-                }
-            }
-
-            if (allLines.Count <= MaxEntries)
-                return;
-
-            int beforeCount = allLines.Count;
-            // Keep only the last MaxEntries lines (preserving original encrypted data)
-            var trimmedLines = allLines.GetRange(allLines.Count - MaxEntries, MaxEntries);
-            int afterCount = trimmedLines.Count;
-
-            // Write to temp file first for atomic replacement
-            var tempPath = FilePath + ".tmp";
-            using (
-                var writeStream = new FileStream(
-                    tempPath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None
-                )
-            )
-            using (var writer = new StreamWriter(writeStream))
-            {
-                foreach (var rawLine in trimmedLines)
-                {
-                    writer.WriteLine(rawLine);
-                }
-            }
-
-            // Atomic move to replace original file
-            File.Move(tempPath, FilePath, overwrite: true);
-
-            DiagnosticsEventSource.Log.HistoryTrim("refinement", beforeCount, afterCount);
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.Log($"Encrypted history trim failed: {ex.Message}");
-            }
-            catch { }
-            NotificationService.ShowWarning(
-                "Failed to trim encrypted history. File may grow large."
-            );
-        }
+        TrimJsonlFile(FilePath, "refinement");
     }
 
     public void AppendTranscription(string text, int recordingDurationMs)
@@ -244,7 +187,12 @@ public sealed class HistoryService : IHistoryService
             int entrySize = line.Length;
             File.AppendAllText(TranscriptionFilePath, line + Environment.NewLine);
             DiagnosticsEventSource.Log.HistoryAppend("transcription", entrySize);
-            TrimTranscriptions();
+            _transcriptionAppendCount++;
+            if (_transcriptionAppendCount >= TrimInterval)
+            {
+                _transcriptionAppendCount = 0;
+                TrimTranscriptions();
+            }
         }
         catch (Exception ex)
         {
@@ -319,16 +267,21 @@ public sealed class HistoryService : IHistoryService
 
     private void TrimTranscriptions()
     {
+        TrimJsonlFile(TranscriptionFilePath, "transcription");
+    }
+
+    private void TrimJsonlFile(string filePath, string historyType)
+    {
         try
         {
-            if (!File.Exists(TranscriptionFilePath))
+            if (!File.Exists(filePath))
                 return;
 
             // Read raw lines without decrypting to preserve original ciphertext
             var allLines = new List<string>();
             using (
                 var stream = new FileStream(
-                    TranscriptionFilePath,
+                    filePath,
                     FileMode.Open,
                     FileAccess.Read,
                     FileShare.ReadWrite
@@ -353,7 +306,7 @@ public sealed class HistoryService : IHistoryService
             int afterCount = trimmedLines.Count;
 
             // Write to temp file first for atomic replacement
-            var tempPath = TranscriptionFilePath + ".tmp";
+            var tempPath = filePath + ".tmp";
             using (
                 var writeStream = new FileStream(
                     tempPath,
@@ -371,19 +324,19 @@ public sealed class HistoryService : IHistoryService
             }
 
             // Atomic move to replace original file
-            File.Move(tempPath, TranscriptionFilePath, overwrite: true);
+            File.Move(tempPath, filePath, overwrite: true);
 
-            DiagnosticsEventSource.Log.HistoryTrim("transcription", beforeCount, afterCount);
+            DiagnosticsEventSource.Log.HistoryTrim(historyType, beforeCount, afterCount);
         }
         catch (Exception ex)
         {
             try
             {
-                Logger.Log($"Encrypted transcription trim failed: {ex.Message}");
+                Logger.Log($"Encrypted {historyType} trim failed: {ex.Message}");
             }
             catch { }
             NotificationService.ShowWarning(
-                "Failed to trim encrypted transcription history. File may grow large."
+                $"Failed to trim encrypted {historyType} history. File may grow large."
             );
         }
     }
